@@ -1,0 +1,348 @@
+import ShaderClass from "./class/ShaderClass.ts";
+import { mat4, vec3 } from "gl-matrix";
+import Camera, { CameraMovement } from "./class/CameraClass.ts";
+import shader_depthTesting, {
+  shader_depthTesting_single,
+} from "./shader/stencil_testing_glsl.ts";
+
+export default class Constructor {
+  gl!: WebGL2RenderingContext | null;
+  shader!: ShaderClass;
+  shaderSingleColor!: ShaderClass;
+  camera!: Camera;
+
+  deltaTime: number = 0.0;
+  lastFrame: number = 0.0;
+
+  keysPressed: Record<string, boolean> = {};
+
+  firstMouse: boolean = true;
+
+  lastX: number = 0;
+  lastY: number = 0;
+
+  lightPos: vec3 = vec3.fromValues(1.2, 1.0, 2.0);
+
+  constructor(canvas: HTMLCanvasElement) {
+    if (!canvas) return;
+    // 使用模版缓冲需要开启
+    this.gl = canvas.getContext("webgl2", { stencil: true });
+    this.shader = new ShaderClass(this.gl, shader_depthTesting);
+    this.shaderSingleColor = new ShaderClass(
+      this.gl,
+      shader_depthTesting_single
+    );
+    this.camera = new Camera(vec3.fromValues(0.0, 0.0, 6.0));
+
+    this.lastX = canvas.width / 2.0;
+    this.lastY = canvas.height / 2.0;
+    // 画布大小
+    canvas.width = canvas.clientWidth * window.devicePixelRatio;
+    canvas.height = canvas.clientHeight * window.devicePixelRatio;
+    this.gl?.viewport(0, 0, canvas.width, canvas.height);
+
+    this.init(this.gl);
+    this.initInputEvent(canvas);
+  }
+
+  initInputEvent(canvas: HTMLCanvasElement) {
+    document.onkeydown = (event) => {
+      this.keysPressed[event.key] = true;
+    };
+
+    document.onkeyup = (event) => {
+      this.keysPressed[event.key] = false;
+    };
+
+    canvas.onmousemove = (event) => {
+      this.updateCameraPosByMouse(event);
+    };
+
+    canvas.onwheel = (event) => {
+      this.updateCameraPosByWheel(event);
+    };
+  }
+
+  updateCameraPosition() {
+    if (this.keysPressed["w"]) {
+      this.camera.processKeyboard(CameraMovement.FORWARD, this.deltaTime);
+    }
+    if (this.keysPressed["s"]) {
+      this.camera.processKeyboard(CameraMovement.BACKWARD, this.deltaTime);
+    }
+    if (this.keysPressed["a"]) {
+      this.camera.processKeyboard(CameraMovement.LEFT, this.deltaTime);
+    }
+    if (this.keysPressed["d"]) {
+      this.camera.processKeyboard(CameraMovement.RIGHT, this.deltaTime);
+    }
+  }
+
+  updateCameraPosByMouse(event: MouseEvent): void {
+    const xpos: number = event.clientX;
+    const ypos: number = event.clientY;
+
+    if (this.firstMouse) {
+      this.lastX = xpos;
+      this.lastY = ypos;
+      this.firstMouse = false;
+    }
+
+    const xoffset: number = xpos - this.lastX;
+    // 注意这里是反向
+    // 因为在屏幕坐标系里，Y 轴向下是正值；但在我们的相机 pitch 中，向上抬头应该是正值，所以需要反向。
+    const yoffset: number = this.lastY - ypos;
+    this.lastX = xpos;
+    this.lastY = ypos;
+    this.camera.processMouseMovement(xoffset, yoffset);
+  }
+
+  updateCameraPosByWheel(event: WheelEvent): void {
+    event.preventDefault();
+    this.camera.processMouseScroll(event.deltaY);
+  }
+
+  async init(gl: WebGL2RenderingContext | null) {
+    if (!gl) return;
+    // 纹理加载
+    const cubeTexture = await this.loadTexture("./images/marble.jpg");
+    const floorTexture = await this.loadTexture("./images/metal.png");
+    // 设置顶点位置
+    const { cubeVao, planeVao } = this.initVertexBuffers() || {};
+    // 深度
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
+    // Enable stencil testing
+    gl.enable(gl.STENCIL_TEST);
+    gl.stencilFunc(gl.NOTEQUAL, 1, 0xff);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    // 设置背景色
+    gl.clearColor(0.1, 0.1, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+
+    // 每一帧的时间
+    const currentFrame = performance.now() / 1000; // 毫秒 → 秒
+    this.deltaTime = currentFrame - this.lastFrame;
+    this.lastFrame = currentFrame;
+
+    this.shaderSingleColor.use();
+    this.shaderSingleColor.setMat4("projection", this.getProjection());
+    this.shaderSingleColor.setMat4("view", this.camera.getViewMatrix());
+
+    this.shader.use();
+    this.shader.setMat4("projection", this.getProjection());
+    this.shader.setMat4("view", this.camera.getViewMatrix());
+
+    // We set its mask to 0x00 to not write to the stencil buffer.
+    gl.stencilMask(0x00);
+    // floor
+    gl.bindVertexArray(planeVao!);
+    gl.bindTexture(gl.TEXTURE_2D, floorTexture);
+    this.shader.setMat4("model", mat4.create());
+    // draw
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // 1st. render pass, draw objects as normal, writing to the stencil buffer
+    // --------------------------------------------------------------------
+    gl.stencilFunc(gl.ALWAYS, 1, 0xff);
+    gl.stencilMask(0xff);
+    // cube
+    gl.bindVertexArray(cubeVao!);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, cubeTexture);
+    // world transformation
+    const model = mat4.create();
+    mat4.translate(model, model, vec3.fromValues(-1.0, 0.0, -1.0));
+    this.shader.setMat4("model", model);
+    // draw
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+    // world transformation
+    const model1 = mat4.create();
+    mat4.translate(model1, model1, vec3.fromValues(2.0, 0.0, 0.0));
+    this.shader.setMat4("model", model1);
+    // draw
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+
+    // 2nd. render pass: now draw slightly scaled versions of the objects, this time disabling stencil writing.
+    // Because the stencil buffer is now filled with several 1s. The parts of the buffer that are 1 are not drawn, thus only drawing
+    // the objects' size differences, making it look like borders.
+    // -----------------------------------------------------------------------------------------------------------------------------
+    gl.stencilFunc(gl.NOTEQUAL, 1, 0xff);
+    gl.stencilMask(0x00);
+    gl.disable(gl.DEPTH_TEST);
+    this.shaderSingleColor.use();
+    const scale = 1.1;
+    // cube
+    gl.bindVertexArray(cubeVao!);
+    // world transformation
+    const model2 = mat4.create();
+    mat4.translate(model2, model2, vec3.fromValues(-1.0, 0.0, -1.0));
+    mat4.scale(model2, model2, vec3.fromValues(scale, scale, scale));
+    this.shaderSingleColor.setMat4("model", model2);
+    // draw
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+    // world transformation
+    const model3 = mat4.create();
+    mat4.translate(model3, model3, vec3.fromValues(2.0, 0.0, 0.0));
+    mat4.scale(model3, model3, vec3.fromValues(scale, scale, scale));
+    this.shaderSingleColor.setMat4("model", model3);
+    // draw
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+
+    gl.stencilMask(0xff);
+    gl.stencilFunc(gl.ALWAYS, 0, 0xff);
+    gl.enable(gl.DEPTH_TEST);
+
+    // 每帧更新相机
+    this.updateCameraPosition();
+
+    requestAnimationFrame(() => this.init(this.gl));
+  }
+
+  initVertexBuffers() {
+    const gl = this.gl;
+    if (!gl) return;
+    // prettier-ignore
+    const cubeVertices = new Float32Array([
+      // positions          // texture Coords
+      -0.5, -0.5, -0.5, 0.0, 0.0,
+      0.5, -0.5, -0.5, 1.0, 0.0,
+      0.5, 0.5, -0.5, 1.0, 1.0,
+      0.5, 0.5, -0.5, 1.0, 1.0,
+      -0.5, 0.5, -0.5, 0.0, 1.0,
+      -0.5, -0.5, -0.5, 0.0, 0.0,
+
+      -0.5, -0.5, 0.5, 0.0, 0.0,
+      0.5, -0.5, 0.5, 1.0, 0.0,
+      0.5, 0.5, 0.5, 1.0, 1.0,
+      0.5, 0.5, 0.5, 1.0, 1.0,
+      -0.5, 0.5, 0.5, 0.0, 1.0,
+      -0.5, -0.5, 0.5, 0.0, 0.0,
+
+      -0.5, 0.5, 0.5, 1.0, 0.0,
+      -0.5, 0.5, -0.5, 1.0, 1.0,
+      -0.5, -0.5, -0.5, 0.0, 1.0,
+      -0.5, -0.5, -0.5, 0.0, 1.0,
+      -0.5, -0.5, 0.5, 0.0, 0.0,
+      -0.5, 0.5, 0.5, 1.0, 0.0,
+
+      0.5, 0.5, 0.5, 1.0, 0.0,
+      0.5, 0.5, -0.5, 1.0, 1.0,
+      0.5, -0.5, -0.5, 0.0, 1.0,
+      0.5, -0.5, -0.5, 0.0, 1.0,
+      0.5, -0.5, 0.5, 0.0, 0.0,
+      0.5, 0.5, 0.5, 1.0, 0.0,
+
+      -0.5, -0.5, -0.5, 0.0, 1.0,
+      0.5, -0.5, -0.5, 1.0, 1.0,
+      0.5, -0.5, 0.5, 1.0, 0.0,
+      0.5, -0.5, 0.5, 1.0, 0.0,
+      -0.5, -0.5, 0.5, 0.0, 0.0,
+      -0.5, -0.5, -0.5, 0.0, 1.0,
+
+      -0.5, 0.5, -0.5, 0.0, 1.0,
+      0.5, 0.5, -0.5, 1.0, 1.0,
+      0.5, 0.5, 0.5, 1.0, 0.0,
+      0.5, 0.5, 0.5, 1.0, 0.0,
+      -0.5, 0.5, 0.5, 0.0, 0.0,
+      -0.5, 0.5, -0.5, 0.0, 1.0
+    ]);
+
+    // prettier-ignore
+    const planeVertices = new Float32Array([
+      // positions          // texture Coords (note we set these higher than 1 (together with GL_REPEAT as texture wrapping mode). this will cause the loor texture to repeat)
+      5.0, -0.5, 5.0, 2.0, 0.0,
+      -5.0, -0.5, 5.0, 0.0, 0.0,
+      -5.0, -0.5, -5.0, 0.0, 2.0,
+
+      5.0, -0.5, 5.0, 2.0, 0.0,
+      -5.0, -0.5, -5.0, 0.0, 2.0,
+      5.0, -0.5, -5.0, 2.0, 2.0
+    ]);
+
+    const FSIZE = Float32Array.BYTES_PER_ELEMENT; // 即 4 字节
+
+    // cube VBO
+    const cubeVbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, cubeVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, cubeVertices, gl.STATIC_DRAW);
+    // cube VAO
+    const cubeVao = gl.createVertexArray();
+    gl.bindVertexArray(cubeVao);
+    // position
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 5 * FSIZE, 0);
+    // texture cood
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 5 * FSIZE, 3 * FSIZE);
+
+    // plane VBO
+    const planeVbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, planeVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, planeVertices, gl.STATIC_DRAW);
+    // plane VAO
+    const planeVao = gl.createVertexArray();
+    gl.bindVertexArray(planeVao);
+    // position
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 5 * FSIZE, 0);
+    // texture cood
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 5 * FSIZE, 3 * FSIZE);
+
+    return { cubeVao, planeVao };
+  }
+
+  getProjection() {
+    // Vertical field of view in radians(垂直视场的弧度)
+    const fovy = (this.camera.Zoom * Math.PI) / 180;
+    // Aspect ratio. typically viewport width/height
+    const aspect = this.gl!.canvas.width / this.gl!.canvas.height;
+    // Near bound of the frustum(截头锥体)
+    const near = 0.1;
+    // Far bound of the frustum, can be null or Infinity
+    const far = 100.0;
+    return mat4.perspective(mat4.create(), fovy, aspect, near, far);
+  }
+
+  /**
+   * 异步加载图片纹理并返回 WebGLTexture 对象。
+   * @param path - 纹理图片的路径，可以是字符串或 URL 对象。
+   * @returns 一个 Promise，成功时返回 WebGLTexture 对象，失败时返回错误信息。
+   */
+  loadTexture(path: string | URL): Promise<WebGLTexture> {
+    return new Promise((resolve, reject) => {
+      const gl = this.gl;
+      if (!gl) return reject("No WebGL context");
+      // 加载图片纹理
+      const texture = gl.createTexture();
+      const image = new Image();
+      image.src = new URL(path, import.meta.url).href;
+      image.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // 纹理上下翻转
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGB,
+          gl.RGB,
+          gl.UNSIGNED_BYTE,
+          image
+        );
+        gl.generateMipmap(gl.TEXTURE_2D);
+        resolve(texture as WebGLTexture);
+      };
+
+      // 设置纹理参数
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+      gl.texParameteri(
+        gl.TEXTURE_2D,
+        gl.TEXTURE_MIN_FILTER,
+        gl.LINEAR_MIPMAP_LINEAR
+      );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    });
+  }
+}

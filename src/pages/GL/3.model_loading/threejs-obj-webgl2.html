@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js OBJLoader + WebGL2</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+        }
+        
+        #container {
+            display: flex;
+            gap: 20px;
+            height: calc(100vh - 40px);
+        }
+        
+        #controls {
+            width: 300px;
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            overflow-y: auto;
+        }
+        
+        #canvas-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #333;
+            border-radius: 10px;
+        }
+        
+        canvas {
+            border: 2px solid #555;
+            border-radius: 8px;
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        .control-group h3 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
+        }
+        
+        input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            background: #444;
+            border: 1px solid #666;
+            border-radius: 5px;
+            color: white;
+        }
+        
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #4CAF50;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .slider-group {
+            margin: 15px 0;
+        }
+        
+        .slider-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            margin: 5px 0;
+        }
+        
+        .info {
+            background: #333;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            background: #2d1b1b;
+            border: 1px solid #ff6b6b;
+        }
+        
+        .success {
+            color: #4CAF50;
+            background: #1b2d1b;
+            border: 1px solid #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <h2>OBJ模型加载器</h2>
+            
+            <div class="control-group">
+                <h3>📁 加载模型</h3>
+                <input type="file" id="objFile" accept=".obj" />
+                <button id="loadDefault">加载默认立方体</button>
+            </div>
+            
+            <div class="control-group">
+                <h3>🎮 控制</h3>
+                <div class="slider-group">
+                    <label>旋转 X: <span id="rotXValue">0</span>°</label>
+                    <input type="range" id="rotX" min="-180" max="180" value="0" step="1">
+                </div>
+                <div class="slider-group">
+                    <label>旋转 Y: <span id="rotYValue">0</span>°</label>
+                    <input type="range" id="rotY" min="-180" max="180" value="0" step="1">
+                </div>
+                <div class="slider-group">
+                    <label>旋转 Z: <span id="rotZValue">0</span>°</label>
+                    <input type="range" id="rotZ" min="-180" max="180" value="0" step="1">
+                </div>
+                <div class="slider-group">
+                    <label>缩放: <span id="scaleValue">1.0</span></label>
+                    <input type="range" id="scale" min="0.1" max="3" value="1" step="0.1">
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <h3>🎨 渲染</h3>
+                <button id="wireframe">切换线框模式</button>
+                <button id="resetView">重置视角</button>
+            </div>
+            
+            <div id="info" class="info">
+                <strong>使用说明：</strong><br>
+                1. 选择OBJ文件或点击加载默认模型<br>
+                2. 使用滑块调整模型姿态<br>
+                3. 支持线框模式切换<br><br>
+                <strong>技术实现：</strong><br>
+                • Three.js OBJLoader解析模型<br>
+                • 提取顶点、法线数据<br>
+                • 原生WebGL2渲染管线<br>
+                • 自定义着色器程序
+            </div>
+        </div>
+        
+        <div id="canvas-container">
+            <canvas id="webglCanvas" width="800" height="600"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script>
+        class WebGL2Renderer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.gl = canvas.getContext('webgl2');
+                if (!this.gl) {
+                    throw new Error('WebGL2 not supported');
+                }
+                
+                this.program = null;
+                this.vertexBuffer = null;
+                this.normalBuffer = null;
+                this.indexBuffer = null;
+                this.vertexCount = 0;
+                this.indexCount = 0;
+                this.isWireframe = false;
+                
+                this.setupShaders();
+                this.setupMatrices();
+                
+                // 启用深度测试
+                this.gl.enable(this.gl.DEPTH_TEST);
+                this.gl.clearColor(0.1, 0.1, 0.1, 1.0);
+            }
+            
+            setupShaders() {
+                const vertexShaderSource = `#version 300 es
+                    precision highp float;
+                    
+                    in vec3 aPosition;
+                    in vec3 aNormal;
+                    
+                    uniform mat4 uModelViewMatrix;
+                    uniform mat4 uProjectionMatrix;
+                    uniform mat3 uNormalMatrix;
+                    
+                    out vec3 vNormal;
+                    out vec3 vPosition;
+                    
+                    void main() {
+                        vec4 mvPosition = uModelViewMatrix * vec4(aPosition, 1.0);
+                        gl_Position = uProjectionMatrix * mvPosition;
+                        
+                        vNormal = normalize(uNormalMatrix * aNormal);
+                        vPosition = mvPosition.xyz;
+                    }
+                `;
+                
+                const fragmentShaderSource = `#version 300 es
+                    precision highp float;
+                    
+                    in vec3 vNormal;
+                    in vec3 vPosition;
+                    
+                    uniform bool uWireframe;
+                    
+                    out vec4 fragColor;
+                    
+                    void main() {
+                        if (uWireframe) {
+                            fragColor = vec4(0.0, 1.0, 0.5, 1.0);
+                        } else {
+                            vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+                            vec3 normal = normalize(vNormal);
+                            
+                            float diffuse = max(dot(normal, lightDir), 0.0);
+                            vec3 color = vec3(0.3, 0.6, 1.0) * (0.3 + 0.7 * diffuse);
+                            
+                            fragColor = vec4(color, 1.0);
+                        }
+                    }
+                `;
+                
+                const vertexShader = this.createShader(this.gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = this.createShader(this.gl.FRAGMENT_SHADER, fragmentShaderSource);
+                
+                this.program = this.createProgram(vertexShader, fragmentShader);
+                this.gl.useProgram(this.program);
+                
+                // 获取attribute和uniform位置
+                this.locations = {
+                    aPosition: this.gl.getAttribLocation(this.program, 'aPosition'),
+                    aNormal: this.gl.getAttribLocation(this.program, 'aNormal'),
+                    uModelViewMatrix: this.gl.getUniformLocation(this.program, 'uModelViewMatrix'),
+                    uProjectionMatrix: this.gl.getUniformLocation(this.program, 'uProjectionMatrix'),
+                    uNormalMatrix: this.gl.getUniformLocation(this.program, 'uNormalMatrix'),
+                    uWireframe: this.gl.getUniformLocation(this.program, 'uWireframe')
+                };
+            }
+            
+            createShader(type, source) {
+                const shader = this.gl.createShader(type);
+                this.gl.shaderSource(shader, source);
+                this.gl.compileShader(shader);
+                
+                if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+                    console.error('Shader compilation error:', this.gl.getShaderInfoLog(shader));
+                    this.gl.deleteShader(shader);
+                    return null;
+                }
+                return shader;
+            }
+            
+            createProgram(vertexShader, fragmentShader) {
+                const program = this.gl.createProgram();
+                this.gl.attachShader(program, vertexShader);
+                this.gl.attachShader(program, fragmentShader);
+                this.gl.linkProgram(program);
+                
+                if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
+                    console.error('Program linking error:', this.gl.getProgramInfoLog(program));
+                    this.gl.deleteProgram(program);
+                    return null;
+                }
+                return program;
+            }
+            
+            setupMatrices() {
+                // 投影矩阵 (透视投影)
+                this.projectionMatrix = this.createPerspectiveMatrix(
+                    45 * Math.PI / 180, // fov
+                    this.canvas.width / this.canvas.height, // aspect
+                    0.1, // near
+                    100.0 // far
+                );
+                
+                // 模型视图矩阵初始值
+                this.modelViewMatrix = this.createIdentityMatrix();
+                this.normalMatrix = this.createIdentityMatrix();
+                
+                // 设置相机位置
+                this.translate(this.modelViewMatrix, 0, 0, -5);
+            }
+            
+            loadModelData(geometries) {
+                // 支持单个几何体或几何体数组
+                if (!Array.isArray(geometries)) {
+                    geometries = [geometries];
+                }
+                
+                // 合并所有几何体数据
+                const allPositions = [];
+                const allNormals = [];
+                const allIndices = [];
+                let vertexOffset = 0;
+                let totalVertices = 0;
+                
+                for (const geometry of geometries) {
+                    const positions = geometry.attributes.position.array;
+                    const normals = geometry.attributes.normal.array;
+                    
+                    // 添加顶点和法线
+                    allPositions.push(...positions);
+                    allNormals.push(...normals);
+                    
+                    // 处理索引
+                    if (geometry.index) {
+                        const indices = geometry.index.array;
+                        for (let i = 0; i < indices.length; i++) {
+                            allIndices.push(indices[i] + vertexOffset);
+                        }
+                    } else {
+                        // 如果没有索引，创建顺序索引
+                        const vertexCount = positions.length / 3;
+                        for (let i = 0; i < vertexCount; i++) {
+                            allIndices.push(vertexOffset + i);
+                        }
+                    }
+                    
+                    vertexOffset += positions.length / 3;
+                    totalVertices += positions.length / 3;
+                }
+                
+                // 创建合并后的缓冲区
+                this.vertexBuffer = this.gl.createBuffer();
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(allPositions), this.gl.STATIC_DRAW);
+                
+                this.normalBuffer = this.gl.createBuffer();
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.normalBuffer);
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(allNormals), this.gl.STATIC_DRAW);
+                
+                if (allIndices.length > 0) {
+                    this.indexBuffer = this.gl.createBuffer();
+                    this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+                    this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(allIndices), this.gl.STATIC_DRAW);
+                    this.indexCount = allIndices.length;
+                } else {
+                    this.vertexCount = totalVertices;
+                }
+                
+                this.showMessage(`模型数据加载成功！总顶点数: ${totalVertices}, 几何体数量: ${geometries.length}`, 'success');
+            }
+            
+            render(rotX = 0, rotY = 0, rotZ = 0, scale = 1) {
+                this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+                
+                if (!this.vertexBuffer) return;
+                
+                // 重置模型视图矩阵
+                this.modelViewMatrix = this.createIdentityMatrix();
+                this.translate(this.modelViewMatrix, 0, 0, -5);
+                
+                // 应用变换
+                this.rotateX(this.modelViewMatrix, rotX * Math.PI / 180);
+                this.rotateY(this.modelViewMatrix, rotY * Math.PI / 180);
+                this.rotateZ(this.modelViewMatrix, rotZ * Math.PI / 180);
+                this.scaleMatrix(this.modelViewMatrix, scale, scale, scale);
+                
+                // 计算法线矩阵
+                this.normalMatrix = this.createNormalMatrix(this.modelViewMatrix);
+                
+                // 使用着色器程序
+                this.gl.useProgram(this.program);
+                
+                // 设置矩阵uniform
+                this.gl.uniformMatrix4fv(this.locations.uProjectionMatrix, false, this.projectionMatrix);
+                this.gl.uniformMatrix4fv(this.locations.uModelViewMatrix, false, this.modelViewMatrix);
+                this.gl.uniformMatrix3fv(this.locations.uNormalMatrix, false, this.normalMatrix);
+                this.gl.uniform1i(this.locations.uWireframe, this.isWireframe);
+                
+                // 绑定顶点数据
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
+                this.gl.enableVertexAttribArray(this.locations.aPosition);
+                this.gl.vertexAttribPointer(this.locations.aPosition, 3, this.gl.FLOAT, false, 0, 0);
+                
+                // 绑定法线数据
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.normalBuffer);
+                this.gl.enableVertexAttribArray(this.locations.aNormal);
+                this.gl.vertexAttribPointer(this.locations.aNormal, 3, this.gl.FLOAT, false, 0, 0);
+                
+                // 渲染
+                if (this.indexBuffer) {
+                    this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+                    if (this.isWireframe) {
+                        // 线框模式：将三角形转换为线段
+                        for (let i = 0; i < this.indexCount; i += 3) {
+                            this.gl.drawElements(this.gl.LINE_LOOP, 3, this.gl.UNSIGNED_INT, i * 4);
+                        }
+                    } else {
+                        this.gl.drawElements(this.gl.TRIANGLES, this.indexCount, this.gl.UNSIGNED_INT, 0);
+                    }
+                } else {
+                    if (this.isWireframe) {
+                        // 线框模式
+                        for (let i = 0; i < this.vertexCount; i += 3) {
+                            this.gl.drawArrays(this.gl.LINE_LOOP, i, 3);
+                        }
+                    } else {
+                        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.vertexCount);
+                    }
+                }
+            }
+            
+            toggleWireframe() {
+                this.isWireframe = !this.isWireframe;
+            }
+            
+            // 矩阵工具函数
+            createIdentityMatrix() {
+                return new Float32Array([
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ]);
+            }
+            
+            createPerspectiveMatrix(fov, aspect, near, far) {
+                const f = Math.tan(Math.PI * 0.5 - 0.5 * fov);
+                const rangeInv = 1.0 / (near - far);
+                
+                return new Float32Array([
+                    f / aspect, 0, 0, 0,
+                    0, f, 0, 0,
+                    0, 0, (near + far) * rangeInv, -1,
+                    0, 0, near * far * rangeInv * 2, 0
+                ]);
+            }
+            
+            translate(matrix, x, y, z) {
+                matrix[12] += x;
+                matrix[13] += y;
+                matrix[14] += z;
+            }
+            
+            rotateX(matrix, angle) {
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const rotMatrix = new Float32Array([
+                    1, 0, 0, 0,
+                    0, c, s, 0,
+                    0, -s, c, 0,
+                    0, 0, 0, 1
+                ]);
+                this.multiplyMatrices(matrix, rotMatrix, matrix);
+            }
+            
+            rotateY(matrix, angle) {
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const rotMatrix = new Float32Array([
+                    c, 0, -s, 0,
+                    0, 1, 0, 0,
+                    s, 0, c, 0,
+                    0, 0, 0, 1
+                ]);
+                this.multiplyMatrices(matrix, rotMatrix, matrix);
+            }
+            
+            rotateZ(matrix, angle) {
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const rotMatrix = new Float32Array([
+                    c, s, 0, 0,
+                    -s, c, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ]);
+                this.multiplyMatrices(matrix, rotMatrix, matrix);
+            }
+            
+            scaleMatrix(matrix, x, y, z) {
+                matrix[0] *= x;
+                matrix[1] *= x;
+                matrix[2] *= x;
+                matrix[3] *= x;
+                matrix[4] *= y;
+                matrix[5] *= y;
+                matrix[6] *= y;
+                matrix[7] *= y;
+                matrix[8] *= z;
+                matrix[9] *= z;
+                matrix[10] *= z;
+                matrix[11] *= z;
+            }
+            
+            multiplyMatrices(a, b, out) {
+                const a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+                const a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+                const a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+                const a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+                
+                const b00 = b[0], b01 = b[1], b02 = b[2], b03 = b[3];
+                const b10 = b[4], b11 = b[5], b12 = b[6], b13 = b[7];
+                const b20 = b[8], b21 = b[9], b22 = b[10], b23 = b[11];
+                const b30 = b[12], b31 = b[13], b32 = b[14], b33 = b[15];
+                
+                out[0] = a00 * b00 + a01 * b10 + a02 * b20 + a03 * b30;
+                out[1] = a00 * b01 + a01 * b11 + a02 * b21 + a03 * b31;
+                out[2] = a00 * b02 + a01 * b12 + a02 * b22 + a03 * b32;
+                out[3] = a00 * b03 + a01 * b13 + a02 * b23 + a03 * b33;
+                
+                out[4] = a10 * b00 + a11 * b10 + a12 * b20 + a13 * b30;
+                out[5] = a10 * b01 + a11 * b11 + a12 * b21 + a13 * b31;
+                out[6] = a10 * b02 + a11 * b12 + a12 * b22 + a13 * b32;
+                out[7] = a10 * b03 + a11 * b13 + a12 * b23 + a13 * b33;
+                
+                out[8] = a20 * b00 + a21 * b10 + a22 * b20 + a23 * b30;
+                out[9] = a20 * b01 + a21 * b11 + a22 * b21 + a23 * b31;
+                out[10] = a20 * b02 + a21 * b12 + a22 * b22 + a23 * b32;
+                out[11] = a20 * b03 + a21 * b13 + a22 * b23 + a23 * b33;
+                
+                out[12] = a30 * b00 + a31 * b10 + a32 * b20 + a33 * b30;
+                out[13] = a30 * b01 + a31 * b11 + a32 * b21 + a33 * b31;
+                out[14] = a30 * b02 + a31 * b12 + a32 * b22 + a33 * b32;
+                out[15] = a30 * b03 + a31 * b13 + a32 * b23 + a33 * b33;
+            }
+            
+            createNormalMatrix(modelViewMatrix) {
+                // 提取3x3矩阵并求逆转置
+                const normalMatrix = new Float32Array(9);
+                normalMatrix[0] = modelViewMatrix[0];
+                normalMatrix[1] = modelViewMatrix[1];
+                normalMatrix[2] = modelViewMatrix[2];
+                normalMatrix[3] = modelViewMatrix[4];
+                normalMatrix[4] = modelViewMatrix[5];
+                normalMatrix[5] = modelViewMatrix[6];
+                normalMatrix[6] = modelViewMatrix[8];
+                normalMatrix[7] = modelViewMatrix[9];
+                normalMatrix[8] = modelViewMatrix[10];
+                return normalMatrix;
+            }
+            
+            showMessage(text, type = 'info') {
+                const info = document.getElementById('info');
+                info.className = `info ${type}`;
+                info.innerHTML = text;
+                if (type !== 'info') {
+                    setTimeout(() => {
+                        info.className = 'info';
+                        info.innerHTML = `
+                            <strong>使用说明：</strong><br>
+                            1. 选择OBJ文件或点击加载默认模型<br>
+                            2. 使用滑块调整模型姿态<br>
+                            3. 支持线框模式切换<br><br>
+                            <strong>技术实现：</strong><br>
+                            • Three.js OBJLoader解析模型<br>
+                            • 提取顶点、法线数据<br>
+                            • 原生WebGL2渲染管线<br>
+                            • 自定义着色器程序
+                        `;
+                    }, 3000);
+                }
+            }
+        }
+        
+        // 简单的OBJ解析器（作为备选方案）
+        class SimpleOBJLoader {
+            parse(objText) {
+                const vertices = [];
+                const normals = [];
+                const faces = [];
+                
+                const lines = objText.split('\n');
+                
+                for (let line of lines) {
+                    line = line.trim();
+                    if (line.startsWith('v ')) {
+                        // 顶点
+                        const parts = line.split(/\s+/);
+                        vertices.push([
+                            parseFloat(parts[1]),
+                            parseFloat(parts[2]),
+                            parseFloat(parts[3])
+                        ]);
+                    } else if (line.startsWith('vn ')) {
+                        // 法线
+                        const parts = line.split(/\s+/);
+                        normals.push([
+                            parseFloat(parts[1]),
+                            parseFloat(parts[2]),
+                            parseFloat(parts[3])
+                        ]);
+                    } else if (line.startsWith('f ')) {
+                        // 面
+                        const parts = line.split(/\s+/).slice(1);
+                        const face = parts.map(part => {
+                            const indices = part.split('/');
+                            return {
+                                vertex: parseInt(indices[0]) - 1,
+                                normal: indices[2] ? parseInt(indices[2]) - 1 : -1
+                            };
+                        });
+                        faces.push(face);
+                    }
+                }
+                
+                // 构建Three.js几何体
+                const geometry = new THREE.BufferGeometry();
+                
+                const positions = [];
+                const calculatedNormals = [];
+                
+                for (let face of faces) {
+                    if (face.length >= 3) {
+                        // 三角化（简单处理，假设都是三角形或四边形）
+                        for (let i = 1; i < face.length - 1; i++) {
+                            const indices = [0, i, i + 1];
+                            
+                            for (let idx of indices) {
+                                const vertexIndex = face[idx].vertex;
+                                const normalIndex = face[idx].normal;
+                                
+                                if (vertexIndex < vertices.length) {
+                                    positions.push(...vertices[vertexIndex]);
+                                    
+                                    if (normalIndex >= 0 && normalIndex < normals.length) {
+                                        calculatedNormals.push(...normals[normalIndex]);
+                                    } else {
+                                        calculatedNormals.push(0, 0, 1); // 默认法线
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(calculatedNormals, 3));
+                
+                // 如果没有法线，计算它们
+                if (calculatedNormals.every(n => n === 0 || n === 1)) {
+                    geometry.computeVertexNormals();
+                }
+                
+                const object = new THREE.Object3D();
+                const mesh = new THREE.Mesh(geometry);
+                object.add(mesh);
+                
+                return object;
+            }
+        }
+        
+        // 应用主逻辑
+        class App {
+            constructor() {
+                this.canvas = document.getElementById('webglCanvas');
+                this.renderer = new WebGL2Renderer(this.canvas);
+                
+                // 检查OBJLoader是否可用
+                if (typeof THREE.OBJLoader !== 'undefined') {
+                    this.objLoader = new THREE.OBJLoader();
+                } else {
+                    console.warn('Using fallback OBJ loader');
+                    this.objLoader = new SimpleOBJLoader();
+                }
+                
+                this.rotX = 0;
+                this.rotY = 0;
+                this.rotZ = 0;
+                this.scale = 1;
+                
+                this.setupEventListeners();
+                this.animate();
+            }
+            
+            setupEventListeners() {
+                // 文件输入
+                document.getElementById('objFile').addEventListener('change', (e) => {
+                    if (e.target.files[0]) {
+                        this.loadObjFile(e.target.files[0]);
+                    }
+                });
+                
+                // 默认模型
+                document.getElementById('loadDefault').addEventListener('click', () => {
+                    this.loadDefaultCube();
+                });
+                
+                // 旋转控制
+                document.getElementById('rotX').addEventListener('input', (e) => {
+                    this.rotX = parseFloat(e.target.value);
+                    document.getElementById('rotXValue').textContent = e.target.value;
+                });
+                
+                document.getElementById('rotY').addEventListener('input', (e) => {
+                    this.rotY = parseFloat(e.target.value);
+                    document.getElementById('rotYValue').textContent = e.target.value;
+                });
+                
+                document.getElementById('rotZ').addEventListener('input', (e) => {
+                    this.rotZ = parseFloat(e.target.value);
+                    document.getElementById('rotZValue').textContent = e.target.value;
+                });
+                
+                // 缩放控制
+                document.getElementById('scale').addEventListener('input', (e) => {
+                    this.scale = parseFloat(e.target.value);
+                    document.getElementById('scaleValue').textContent = e.target.value;
+                });
+                
+                // 线框模式
+                document.getElementById('wireframe').addEventListener('click', () => {
+                    this.renderer.toggleWireframe();
+                });
+                
+                // 重置视角
+                document.getElementById('resetView').addEventListener('click', () => {
+                    this.resetControls();
+                });
+            }
+            
+            loadObjFile(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const objText = e.target.result;
+                        const object = this.objLoader.parse(objText);
+                        
+                        // 收集所有mesh的几何体
+                        const geometries = [];
+                        let meshCount = 0;
+                        
+                        object.traverse((child) => {
+                            if (child.isMesh) {
+                                meshCount++;
+                                const geometry = child.geometry;
+                                
+                                // 确保有法线
+                                if (!geometry.attributes.normal) {
+                                    geometry.computeVertexNormals();
+                                }
+                                
+                                // 应用mesh的变换到几何体
+                                geometry.applyMatrix4(child.matrix);
+                                
+                                geometries.push(geometry);
+                            }
+                        });
+                        
+                        if (geometries.length > 0) {
+                            this.renderer.loadModelData(geometries);
+                            this.renderer.showMessage(
+                                `OBJ模型完整加载成功！<br>
+                                发现 ${meshCount} 个Mesh<br>
+                                总顶点数: ${geometries.reduce((sum, g) => sum + g.attributes.position.count, 0)}`, 
+                                'success'
+                            );
+                        } else {
+                            this.renderer.showMessage('OBJ文件中未找到任何有效的几何体', 'error');
+                        }
+                    } catch (error) {
+                        console.error('Error loading OBJ:', error);
+                        this.renderer.showMessage('OBJ文件解析失败: ' + error.message, 'error');
+                    }
+                };
+                reader.readAsText(file);
+            }
+            
+            loadDefaultCube() {
+                // 创建一个包含多个几何体的测试场景
+                const geometries = [];
+                
+                // 主立方体
+                const mainCube = new THREE.BoxGeometry(2, 2, 2);
+                mainCube.computeVertexNormals();
+                geometries.push(mainCube);
+                
+                // 小立方体1
+                const smallCube1 = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+                smallCube1.translate(3, 0, 0);
+                smallCube1.computeVertexNormals();
+                geometries.push(smallCube1);
+                
+                // 小立方体2
+                const smallCube2 = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+                smallCube2.translate(-3, 0, 0);
+                smallCube2.computeVertexNormals();
+                geometries.push(smallCube2);
+                
+                // 球体
+                const sphere = new THREE.SphereGeometry(0.8, 16, 16);
+                sphere.translate(0, 3, 0);
+                sphere.computeVertexNormals();
+                geometries.push(sphere);
+                
+                this.renderer.loadModelData(geometries);
+            }
+            
+            resetControls() {
+                this.rotX = 0;
+                this.rotY = 0;
+                this.rotZ = 0;
+                this.scale = 1;
+                
+                document.getElementById('rotX').value = 0;
+                document.getElementById('rotY').value = 0;
+                document.getElementById('rotZ').value = 0;
+                document.getElementById('scale').value = 1;
+                
+                document.getElementById('rotXValue').textContent = '0';
+                document.getElementById('rotYValue').textContent = '0';
+                document.getElementById('rotZValue').textContent = '0';
+                document.getElementById('scaleValue').textContent = '1.0';
+            }
+            
+            animate() {
+                this.renderer.render(this.rotX, this.rotY, this.rotZ, this.scale);
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+        
+        // 启动应用
+        window.addEventListener('load', () => {
+            try {
+                new App();
+            } catch (error) {
+                document.getElementById('info').innerHTML = `
+                    <div class="error">
+                        <strong>错误:</strong> ${error.message}<br>
+                        请确保浏览器支持WebGL2
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
