@@ -7,7 +7,7 @@ import MotionBlurEffect from "./class/MotionBlurEffect.ts";
 import shadow_mapping_base, {
   shader_debug_quad,
   shader_shadow_mapping_depth,
-} from "./shader/shadow_mapping_base.ts";
+} from "./shader/shadow_mapping.ts";
 
 export default class Constructor {
   gl!: WebGL2RenderingContext | null;
