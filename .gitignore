@@ -12,7 +12,6 @@ dist
 dist-ssr
 *.local
 public/assets
-src/pages/GL
 
 # Editor directories and files
 .vscode/*
