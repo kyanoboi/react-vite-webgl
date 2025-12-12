@@ -28,11 +28,6 @@ interface IRouteConfig {
 const routeConfig: IRouteConfig = {
   routes: [
     {
-      name: "home",
-      path: "/home",
-      component: lazy(() => import("@/pages/home")),
-    },
-    {
       name: "map",
       path: "/map",
       component: lazy(() => import("@/pages/map")),
