@@ -1,5 +1,5 @@
-import { ComponentType, lazy } from "react";
-import { RouteObject } from "react-router-dom";
+import { ComponentType, lazy, createElement } from "react";
+import { RouteObject, Navigate } from "react-router-dom";
 
 // 使用交叉类型扩展 RouteObject
 export type IRoute = RouteObject & {
@@ -28,14 +28,21 @@ interface IRouteConfig {
 const routeConfig: IRouteConfig = {
   routes: [
     {
-      name: "map",
-      path: "/map",
-      component: lazy(() => import("@/pages/map")),
+      name: "root",
+      path: "/",
+      component: () =>
+        createElement(Navigate, { to: "/opengl", replace: true }),
+      isMenu: false,
     },
     {
-      name: "gl",
-      path: "/",
-      component: lazy(() => import("@/pages/gl")),
+      name: "arcgis",
+      path: "/arcgis",
+      component: lazy(() => import("@/pages/ArcGIS")),
+    },
+    {
+      name: "opengl",
+      path: "/opengl",
+      component: lazy(() => import("@/pages/OpenGL")),
     },
   ],
 };
