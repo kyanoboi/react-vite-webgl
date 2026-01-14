@@ -441,17 +441,19 @@ export default class Constructor {
     const depthMap = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, depthMap);
     // internal format 必须与 type 匹配
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.DEPTH_COMPONENT32F,
-      1024,
-      1024,
-      0,
-      gl.DEPTH_COMPONENT,
-      gl.FLOAT,
-      null
-    );
+    for (let i = 0; i < 6; i++) {
+      gl.texImage2D(
+        gl.TEXTURE_CUBE_MAP_POSITIVE_X + i,
+        0,
+        gl.DEPTH_COMPONENT24, // ⚠️ 注意：不是 DEPTH_COMPONENT
+        1024,
+        1024,
+        0,
+        gl.DEPTH_COMPONENT,
+        gl.UNSIGNED_INT,
+        null
+      );
+    }
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
