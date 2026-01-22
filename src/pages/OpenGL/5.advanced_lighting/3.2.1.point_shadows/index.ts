@@ -5,8 +5,7 @@ import Camera from "./class/CameraClass.ts";
 import CameraEventClass from "./class/CameraEventClass.ts";
 import MotionBlurEffect from "./class/MotionBlurEffect.ts";
 import shadow_mapping_base, {
-  shader_debug_quad,
-  shader_shadow_mapping_depth,
+  shader_point_shadows_depth,
 } from "./shader/shadow_mapping.ts";
 
 export default class Constructor {
@@ -22,11 +21,10 @@ export default class Constructor {
   deltaTime: number = 0.0;
   lastFrame: number = 0.0;
 
-  isBlinn: boolean = false;
+  isShowShadow: boolean = true;
   gammaEnabled: boolean = false;
 
-  lightPosition: vec3 = vec3.fromValues(-2.0, 4.0, -1.0);
-  lightSpaceMatrix!: mat4;
+  lightPosition: vec3 = vec3.fromValues(0.0, 0.0, 0.0);
 
   floorTexture!: WebGLTexture;
   floorTextureGammaCorrected!: WebGLTexture;
@@ -34,13 +32,12 @@ export default class Constructor {
   shadowMapWidth: number = 1024;
   shadowMapHeight: number = 1024;
   depthMapFBO!: WebGLFramebuffer;
-  depthMap!: WebGLTexture;
+  depthCubeMap!: WebGLTexture;
 
   cubeVAO!: WebGLVertexArrayObject | null;
   cubeVBO!: WebGLBuffer | null;
   quadVAO!: WebGLVertexArrayObject | null;
   quadVBO!: WebGLBuffer | null;
-  planeVAO!: WebGLVertexArrayObject | null;
 
   // 当前视图投影矩阵
   currViewProjMatrix: mat4 = mat4.create();
@@ -52,9 +49,8 @@ export default class Constructor {
     this.shader = new ShaderClass(this.gl, shadow_mapping_base);
     this.simpleDepthShader = new ShaderClass(
       this.gl,
-      shader_shadow_mapping_depth
+      shader_point_shadows_depth,
     );
-    this.debugDepthQuad = new ShaderClass(this.gl, shader_debug_quad);
     // 初始化相机
     this.camera = new Camera(vec3.fromValues(0.0, 0.0, 3.0));
     // 初始化相机事件
@@ -69,16 +65,17 @@ export default class Constructor {
     // 初始化控制面板
     this.initControlPanel();
     // 创建阴影贴图帧缓冲区
-    const { depthMapFBO, depthMap } = this.createShadowMapFramebuffer() || {};
+    const { depthMapFBO, depthCubeMap } =
+      this.createShadowMapFramebuffer() || {};
     this.depthMapFBO = depthMapFBO!;
-    this.depthMap = depthMap!;
+    this.depthCubeMap = depthCubeMap!;
     // 初始化渲染管道
     this.init(this.gl);
   }
 
   initControlPanel() {
     const gui = new GUI();
-    gui.add(this, "isBlinn").name("Blinn-Phong");
+    gui.add(this, "isShowShadow").name("显示阴影");
     gui.add(this, "gammaEnabled").name("伽马校正");
     // 添加运动模糊控制
     gui.add(this.motionBlurEffect, "enabled").name("运动模糊");
@@ -100,73 +97,164 @@ export default class Constructor {
     if (!this.floorTextureGammaCorrected) {
       this.floorTextureGammaCorrected = await this.loadTexture(
         "./images/wood.png",
-        true
+        true,
       );
     }
 
-    const { planeVao } = this.initVertexBuffers() || {};
-    this.planeVAO = planeVao!;
+    this.lightPosition[2] = Math.sin((performance.now() / 1000) * 0.5) * 1.0;
 
     gl.enable(gl.DEPTH_TEST);
     gl.clearColor(0.1, 0.1, 0.1, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    // 1. render depth of scene to texture (from light's perspective)
-    // --------------------------------------------------------------
-    this.renderSceneDepthToTexture();
-    this.renderSceneObject(this.simpleDepthShader);
+    // 0. create depth cubemap transformation matrices
+    // -----------------------------------------------
+    const shadowTransforms: mat4[] = [];
+    this.createDepthCubemap(shadowTransforms);
+    // 1. render scene to depth cubemap
+    // --------------------------------
+    // reset viewport
+    gl.viewport(0, 0, this.shadowMapWidth, this.shadowMapHeight);
+    this.renderSceneToDepthMap(shadowTransforms);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // 2. render scene as normal using the generated depth/shadow map
+    // --------------------------------------------------------------
     // reset viewport
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    // 2. render scene as normal using the generated depth/shadow map
-    // --------------------------------------------------------------
     this.renderWithMotionBlur();
-    // render Depth map to quad for visual debugging
-    // ---------------------------------------------
-    this.debugDepthQuad.use();
-    this.debugDepthQuad.setFloat("near_plane", 1.0);
-    this.debugDepthQuad.setFloat("far_plane", 7.5);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.depthMap);
-    // this.renderQuad();
 
     this.cameraEvent.updateCameraPosition(this.deltaTime);
 
     requestAnimationFrame(() => this.init(this.gl));
   }
 
-  renderSceneDepthToTexture() {
+  /**
+   * 创建深度立方体贴图
+   * @param {*} shadowTransforms 6 个 light-space 矩阵
+   * @return {*}
+   * @memberof Constructor
+   */
+  createDepthCubemap(shadowTransforms: mat4[]) {
     const gl = this.gl;
     if (!gl) return;
-    const near_plane = 1.0;
-    const far_plane = 7.5;
-    const lightProjection = mat4.create();
-    mat4.ortho(
-      lightProjection,
-      -10.0,
-      10.0,
-      -10.0,
-      10.0,
-      near_plane,
-      far_plane
+
+    // 定义近平面和远平面
+    const nearPlane = 1.0;
+    const farPlane = 25.0;
+
+    // 创建透视投影矩阵 (90度视场角)
+    const shadowProj = mat4.create();
+    mat4.perspective(
+      shadowProj,
+      Math.PI / 2, // 90度转弧度
+      this.shadowMapWidth / this.shadowMapHeight,
+      nearPlane,
+      farPlane,
     );
-    const lightView = mat4.create();
-    mat4.lookAt(
-      lightView,
-      this.lightPosition,
-      vec3.fromValues(0.0, 0.0, 0.0),
-      vec3.fromValues(0.0, 1.0, 0.0)
+
+    const lightPos = this.lightPosition;
+
+    // 辅助函数：创建 lookAt 矩阵并与投影矩阵相乘
+    function createShadowTransform(lightPos: vec3, target: vec3, up: vec3) {
+      const view = mat4.create();
+      mat4.lookAt(view, lightPos, target, up);
+
+      const transform = mat4.create();
+      mat4.multiply(transform, shadowProj, view);
+
+      return transform;
+    }
+
+    // +X 面
+    shadowTransforms.push(
+      createShadowTransform(
+        lightPos,
+        [lightPos[0] + 1.0, lightPos[1], lightPos[2]],
+        [0.0, -1.0, 0.0],
+      ),
     );
-    const lightSpaceMatrix = mat4.create();
-    mat4.multiply(lightSpaceMatrix, lightProjection, lightView);
-    this.lightSpaceMatrix = lightSpaceMatrix;
-    // render scene from light's point of view
-    this.simpleDepthShader.use();
-    this.simpleDepthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+    // -X 面
+    shadowTransforms.push(
+      createShadowTransform(
+        lightPos,
+        [lightPos[0] - 1.0, lightPos[1], lightPos[2]],
+        [0.0, -1.0, 0.0],
+      ),
+    );
+
+    // +Y 面
+    shadowTransforms.push(
+      createShadowTransform(
+        lightPos,
+        [lightPos[0], lightPos[1] + 1.0, lightPos[2]],
+        [0.0, 0.0, 1.0],
+      ),
+    );
+
+    // -Y 面
+    shadowTransforms.push(
+      createShadowTransform(
+        lightPos,
+        [lightPos[0], lightPos[1] - 1.0, lightPos[2]],
+        [0.0, 0.0, -1.0],
+      ),
+    );
+
+    // +Z 面
+    shadowTransforms.push(
+      createShadowTransform(
+        lightPos,
+        [lightPos[0], lightPos[1], lightPos[2] + 1.0],
+        [0.0, -1.0, 0.0],
+      ),
+    );
+
+    // -Z 面
+    shadowTransforms.push(
+      createShadowTransform(
+        lightPos,
+        [lightPos[0], lightPos[1], lightPos[2] - 1.0],
+        [0.0, -1.0, 0.0],
+      ),
+    );
+  }
+
+  renderSceneToDepthMap(shadowTransforms: mat4[]) {
+    const gl = this.gl;
+    if (!gl) return;
+    const far_plane = 25.0;
+
     gl.viewport(0, 0, this.shadowMapWidth, this.shadowMapHeight);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.depthMapFBO);
-    gl.clear(gl.DEPTH_BUFFER_BIT);
+
+    this.simpleDepthShader.use();
+    this.simpleDepthShader.setFloat("far_plane", far_plane);
+    this.simpleDepthShader.setVec3("lightPos", this.lightPosition);
+
+    for (let i = 0; i < 6; i++) {
+      // 附加当前面到帧缓冲
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.DEPTH_ATTACHMENT,
+        gl.TEXTURE_CUBE_MAP_POSITIVE_X + i,
+        this.depthCubeMap,
+        0,
+      );
+
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+
+      // 设置当前面的变换矩阵
+      this.simpleDepthShader.setInt("faceIndex", i);
+      this.simpleDepthShader.setMat4(
+        "shadowMatrices[" + i + "]",
+        shadowTransforms[i],
+      );
+
+      // 渲染场景几何体
+      this.renderSceneObject(this.simpleDepthShader);
+    }
   }
 
   renderWithMotionBlur() {
@@ -184,16 +272,7 @@ export default class Constructor {
         this.renderScene();
       });
 
-      // 2. 渲染深度信息
-      this.motionBlurEffect.renderDepthToFramebuffer(() => {
-        this.motionBlurEffect.renderDepth(
-          this.planeVAO!,
-          this.camera.getViewMatrix(),
-          this.getProjection()
-        );
-      });
-
-      // 3. 应用运动模糊到屏幕
+      // 2. 应用运动模糊到屏幕
       this.motionBlurEffect.applyMotionBlur();
     } else {
       // 无运动模糊时直接渲染到屏幕
@@ -212,26 +291,26 @@ export default class Constructor {
 
     this.shader.use();
     this.shader.setInt("diffuseTexture", 0);
-    this.shader.setInt("shadowMap", 1);
+    this.shader.setInt("depthMap", 1);
 
     this.shader.setMat4("view", this.camera.getViewMatrix());
     this.shader.setMat4("projection", this.getProjection());
     // set light uniforms
     this.shader.setVec3("lightPos", this.lightPosition);
-    this.shader.setMat4("lightSpaceMatrix", this.lightSpaceMatrix);
-    this.shader.setVec3("viewPosition", this.camera.Position);
+    this.shader.setVec3("viewPos", this.camera.Position);
+    this.shader.setInt("shadows", this.isShowShadow ? 1 : 0);
+    this.shader.setFloat("far_plane", 25.0);
 
     this.shader.setInt("gamma", this.gammaEnabled ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(
       gl.TEXTURE_2D,
-      this.gammaEnabled ? this.floorTextureGammaCorrected : this.floorTexture
+      this.gammaEnabled ? this.floorTextureGammaCorrected : this.floorTexture,
     );
-    this.shader.setInt("isBlinn", this.isBlinn ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.depthMap);
+    gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.depthCubeMap);
 
     this.renderSceneObject(this.shader);
   }
@@ -243,23 +322,29 @@ export default class Constructor {
     gl.enable(gl.DEPTH_TEST);
     gl.clearColor(0.1, 0.1, 0.1, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    // floor
+    // room cube
     shader.use();
     const model = mat4.create();
+    mat4.scale(model, model, vec3.fromValues(2.5, 2.5, 2.5));
     shader.setMat4("model", model);
     this.setNormalMatrix(shader, model);
-    gl.bindVertexArray(this.planeVAO);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    // 请注意，我们在这里禁用了剔除，因为我们渲染立方体的“内部”而不是通常的“外部”，这会抛出正常的剔除方法。
+    gl.disable(gl.CULL_FACE);
+    // 当从内部绘制立方体时，一个小技巧来反转法线，这样照明仍然有效。
+    shader.setInt("reverse_normals", 1);
+    this.renderCube();
+    shader.setInt("reverse_normals", 0);
+    gl.enable(gl.CULL_FACE);
     // cubes
     // cube1
     const model1 = mat4.translate(
       mat4.create(),
       model,
-      vec3.fromValues(0.0, 1.5, 0.0)
+      vec3.fromValues(4.0, -3.5, 0.0),
     );
     shader.setMat4(
       "model",
-      mat4.scale(model1, model1, vec3.fromValues(0.5, 0.5, 0.5))
+      mat4.scale(model1, model1, vec3.fromValues(0.5, 0.5, 0.5)),
     );
     this.setNormalMatrix(shader, model1);
     this.renderCube();
@@ -267,11 +352,11 @@ export default class Constructor {
     const model2 = mat4.translate(
       mat4.create(),
       model,
-      vec3.fromValues(2.0, 0.0, 1.0)
+      vec3.fromValues(2.0, 3.0, 1.0),
     );
     shader.setMat4(
       "model",
-      mat4.scale(model2, model2, vec3.fromValues(0.5, 0.5, 0.5))
+      mat4.scale(model2, model2, vec3.fromValues(0.75, 0.75, 0.75)),
     );
     this.setNormalMatrix(shader, model2);
     this.renderCube();
@@ -279,19 +364,43 @@ export default class Constructor {
     const model3 = mat4.translate(
       mat4.create(),
       model,
-      vec3.fromValues(-1.0, 0.0, 2.0)
-    );
-    mat4.rotate(
-      model3,
-      model3,
-      60,
-      vec3.normalize(vec3.create(), vec3.fromValues(1.0, 0.0, 1.0))
+      vec3.fromValues(3.0, -1.0, 0.0),
     );
     shader.setMat4(
       "model",
-      mat4.scale(model3, model3, vec3.fromValues(0.25, 0.25, 0.25))
+      mat4.scale(model3, model3, vec3.fromValues(0.5, 0.5, 0.5)),
     );
     this.setNormalMatrix(shader, model3);
+    this.renderCube();
+    // cube4
+    const model4 = mat4.translate(
+      mat4.create(),
+      model,
+      vec3.fromValues(-1.5, 1.0, 1.5),
+    );
+    shader.setMat4(
+      "model",
+      mat4.scale(model4, model4, vec3.fromValues(0.5, 0.5, 0.5)),
+    );
+    this.setNormalMatrix(shader, model4);
+    this.renderCube();
+    // cube5
+    const model5 = mat4.translate(
+      mat4.create(),
+      model,
+      vec3.fromValues(-1.5, 2.0, -3.0),
+    );
+    mat4.rotate(
+      model5,
+      model5,
+      60,
+      vec3.normalize(vec3.create(), vec3.fromValues(1.0, 0.0, 1.0)),
+    );
+    shader.setMat4(
+      "model",
+      mat4.scale(model5, model5, vec3.fromValues(0.75, 0.75, 0.75)),
+    );
+    this.setNormalMatrix(shader, model5);
     this.renderCube();
   }
 
@@ -362,74 +471,11 @@ export default class Constructor {
     gl.drawArrays(gl.TRIANGLES, 0, 36);
   }
 
-  renderQuad() {
-    const gl = this.gl;
-    if (!gl) return;
-    if (!this.quadVAO) {
-      // prettier-ignore
-      const quadVertices = new Float32Array([
-        // positions        // texture Coords
-        -1.0,  1.0, 0.0, 0.0, 1.0,
-        -1.0, -1.0, 0.0, 0.0, 0.0,
-        1.0,  1.0, 0.0, 1.0, 1.0,
-        1.0, -1.0, 0.0, 1.0, 0.0,
-      ]);
-      const FSIZE = Float32Array.BYTES_PER_ELEMENT;
-      // setup plane VAO
-      this.quadVBO = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.quadVBO);
-      gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
-
-      this.quadVAO = gl.createVertexArray();
-      gl.bindVertexArray(this.quadVAO);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 5 * FSIZE, 0);
-      gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 5 * FSIZE, 3 * FSIZE);
-    }
-    gl.bindVertexArray(this.quadVAO);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
-
   setNormalMatrix(shader: ShaderClass, model: mat4) {
     const normalMatrix = model;
     mat4.invert(normalMatrix, normalMatrix);
     mat4.transpose(normalMatrix, normalMatrix);
     shader.setMat3("normalMatrix", mat3.fromMat4(mat3.create(), normalMatrix));
-  }
-
-  initVertexBuffers() {
-    const gl = this.gl;
-    if (!gl) return;
-
-    // prettier-ignore
-    const planeVertices = new Float32Array([
-        // positions            // normals         // texcoords
-         25.0, -0.5,  25.0,  0.0, 1.0, 0.0,  25.0,  0.0,
-        -25.0, -0.5,  25.0,  0.0, 1.0, 0.0,   0.0,  0.0,
-        -25.0, -0.5, -25.0,  0.0, 1.0, 0.0,   0.0, 25.0,
-
-         25.0, -0.5,  25.0,  0.0, 1.0, 0.0,  25.0,  0.0,
-        -25.0, -0.5, -25.0,  0.0, 1.0, 0.0,   0.0, 25.0,
-         25.0, -0.5, -25.0,  0.0, 1.0, 0.0,  25.0, 25.0
-    ]);
-
-    const FSIZE = Float32Array.BYTES_PER_ELEMENT;
-
-    const planeVbo = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, planeVbo);
-    gl.bufferData(gl.ARRAY_BUFFER, planeVertices, gl.STATIC_DRAW);
-
-    const planeVao = gl.createVertexArray();
-    gl.bindVertexArray(planeVao);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 8 * FSIZE, 0);
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 8 * FSIZE, 3 * FSIZE);
-    gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 8 * FSIZE, 6 * FSIZE);
-
-    return { planeVao };
   }
 
   createShadowMapFramebuffer() {
@@ -438,39 +484,29 @@ export default class Constructor {
     const depthMapFBO = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, depthMapFBO);
     // create depth texture
-    const depthMap = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, depthMap);
-    // internal format 必须与 type 匹配
+    const depthCubeMap = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_CUBE_MAP, depthCubeMap);
     for (let i = 0; i < 6; i++) {
       gl.texImage2D(
         gl.TEXTURE_CUBE_MAP_POSITIVE_X + i,
         0,
-        gl.DEPTH_COMPONENT24, // ⚠️ 注意：不是 DEPTH_COMPONENT
-        1024,
-        1024,
+        gl.DEPTH_COMPONENT32F,
+        this.shadowMapWidth,
+        this.shadowMapHeight,
         0,
         gl.DEPTH_COMPONENT,
-        gl.UNSIGNED_INT,
-        null
+        gl.FLOAT,
+        null,
       );
     }
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    // attach depth texture as FBO's depth buffer
-    gl.bindFramebuffer(gl.FRAMEBUFFER, depthMapFBO);
-    gl.framebufferTexture2D(
-      gl.FRAMEBUFFER,
-      gl.DEPTH_ATTACHMENT,
-      gl.TEXTURE_2D,
-      depthMap,
-      0
-    );
-    gl.drawBuffers([gl.NONE]);
-    gl.readBuffer(gl.NONE);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return { depthMapFBO, depthMap };
+    return { depthMapFBO, depthCubeMap };
   }
 
   getProjection() {
@@ -483,7 +519,7 @@ export default class Constructor {
 
   loadTexture(
     path: string | URL,
-    gammaCorrection: boolean = false
+    gammaCorrection: boolean = false,
   ): Promise<WebGLTexture> {
     return new Promise((resolve, reject) => {
       const gl = this.gl as WebGL2RenderingContext;
@@ -515,7 +551,7 @@ export default class Constructor {
             internalFormat,
             format,
             gl.UNSIGNED_BYTE,
-            image
+            image,
           );
         } catch (e) {
           console.error("texImage2D error:", e);
@@ -528,7 +564,7 @@ export default class Constructor {
         gl.texParameteri(
           gl.TEXTURE_2D,
           gl.TEXTURE_MIN_FILTER,
-          gl.LINEAR_MIPMAP_LINEAR
+          gl.LINEAR_MIPMAP_LINEAR,
         );
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
