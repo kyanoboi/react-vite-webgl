@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import Constructor from "./5.advanced_lighting/3.2.1.point_shadows";
+import Constructor from "./5.advanced_lighting/3.2.2.point_shadows_soft";
 
 const GL = () => {
   const contianer = useRef<HTMLCanvasElement | null>(null);
@@ -20,9 +20,6 @@ const GL = () => {
         justifyContent: "center",
       }}
     >
-      {/* 前置章节1.getting_started 使用此canvas */}
-      {/* <canvas height={600} width={800} ref={(v) => (contianer.current = v)} /> */}
-      {/* light章节开始使用此canvas */}
       <canvas
         style={{ height: "100%", width: "100%" }}
         ref={(v) => (contianer.current = v)}
