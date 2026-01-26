@@ -38,11 +38,20 @@ export const FSHADER_SOURCE: string = /* glsl */ `#version 300 es
     uniform sampler2D diffuseTexture;
     uniform samplerCube depthMap;
 
-    uniform bool isBlinn;
     uniform bool gamma;
 
     uniform float far_plane;
     uniform bool shadows;
+
+    // array of offset direction for sampling
+    vec3 gridSamplingDisk[20] = vec3[]
+    (
+        vec3(1, 1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1, 1,  1), 
+        vec3(1, 1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1, 1, -1),
+        vec3(1, 1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1, 1,  0),
+        vec3(1, 0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1, 0, -1),
+        vec3(0, 1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0, 1, -1)
+    );
 
     vec3 DiffuseAndSpecularCalculation(vec3 normal, vec3 fragPos, vec3 lightPos, vec3 lightColor){
       // diffuse
@@ -52,7 +61,9 @@ export const FSHADER_SOURCE: string = /* glsl */ `#version 300 es
       // specular
       vec3 viewDir = normalize(viewPos - fragPos);  
       vec3 reflectDir = reflect(-lightDir, normal);
-      float spec = pow(max(dot(viewDir, reflectDir), 0.0), 64.0);
+      float spec = 0.0;
+      vec3 halfwayDir = normalize(lightDir + viewDir);
+      spec = pow(max(dot(normal, halfwayDir), 0.0), 64.0);
       vec3 specular = spec * lightColor;  
       
       return diffuse + specular;
@@ -62,15 +73,24 @@ export const FSHADER_SOURCE: string = /* glsl */ `#version 300 es
     {
         // 获取片元位置和光源位置之间的向量
         vec3 fragToLight = fragPos - lightPos;
-        // 使用片元位置到光源位置的向量，并从深度图中采样   
-        float closestDepth = texture(depthMap, fragToLight).r;
-        // closestDepth值现在在0到1的范围内了，所以我们先将其转换回0到far_plane的范围，这需要把他乘以far_plane
-        closestDepth *= far_plane;
         // 现在将当前的线性深度作为碎片和光源位置之间的长度
         float currentDepth = length(fragToLight);
-        // 现在我们可以将两个深度值对比一下，看看哪一个更接近，以此决定当前的fragment是否在阴影当中。我们还要包含一个阴影偏移，所以才能避免阴影失真
-        float bias = 0.05; // we use a much larger bias since depth is now in [near_plane, far_plane] range
-        float shadow = currentDepth -  bias > closestDepth ? 1.0 : 0.0;        
+        // PCF
+        // 由于万向阴影贴图基于传统阴影映射的原则，它便也继承了由解析度产生的非真实感。如果你放大就会看到锯齿边了。
+        // PCF或称Percentage-closer filtering允许我们通过对fragment位置周围过滤多个样本，并对结果平均化。
+        float shadow = 0.0;
+        float bias = 0.15;
+        int samples = 20;
+        float viewDistance = length(viewPos - fragPos);
+        float diskRadius = (1.0 + (viewDistance / far_plane)) / 150.0;
+        for(int i = 0; i < samples; ++i)
+        {
+            float closestDepth = texture(depthMap, fragToLight + gridSamplingDisk[i] * diskRadius).r;
+            closestDepth *= far_plane;   // undo mapping [0;1]
+            if(currentDepth - bias > closestDepth)
+                shadow += 1.0;
+        }
+        shadow /= float(samples); 
         // display closestDepth as debug (to visualize depth cubemap)
         // FragColor = vec4(vec3(closestDepth / far_plane), 1.0);    
             
@@ -101,15 +121,14 @@ export const VSHADER_SOURCE_POINT_SHADOWS_DEPTH: string = /* glsl */ `#version 3
     layout (location = 0) in vec3 aPos;
 
     uniform mat4 model;
-    uniform mat4 shadowMatrices[6];
-    uniform int faceIndex; // 当前渲染的面索引
+    uniform mat4 shadowMatrices;
 
     out vec4 FragPos;
 
     void main()
     {
-        FragPos = model * vec4(aPos, 1.0);
-        gl_Position = shadowMatrices[faceIndex] * FragPos;
+        FragPos =  model * vec4(aPos, 1.0);
+        gl_Position = shadowMatrices * FragPos;
     }
 `;
 
