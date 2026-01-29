@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import Constructor from "./5.advanced_lighting/3.2.2.point_shadows_soft";
+import Constructor from "./5.advanced_lighting/4.normal_mapping";
 
 const GL = () => {
   const contianer = useRef<HTMLCanvasElement | null>(null);
