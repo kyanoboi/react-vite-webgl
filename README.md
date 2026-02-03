@@ -1,6 +1,6 @@
-# React 3D Mapping Application
+# LearnOpenWebGL
 
-A modern 3D mapping application built with React, TypeScript, Vite, ArcGIS JS API, and Three.js.
+The webgl version of learnopengl
 
 ## Features
 
