@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import Constructor from "./5.advanced_lighting/4.normal_mapping";
+import Constructor from "./5.advanced_lighting/5.1.parallax_mapping";
 
 const GL = () => {
   const contianer = useRef<HTMLCanvasElement | null>(null);
