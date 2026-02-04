@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import Constructor from "./5.advanced_lighting/5.2.steep_parallax_mapping";
+import Constructor from "./5.advanced_lighting/5.3.parallax_occlusion_mapping";
 
 const GL = () => {
   const contianer = useRef<HTMLCanvasElement | null>(null);
