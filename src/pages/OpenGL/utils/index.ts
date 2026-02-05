@@ -17,7 +17,7 @@ export function initShaders(
     const message = gl.getShaderInfoLog(vertexShader);
     if (message && message.length > 0) {
       throw message;
-    } else throw new Error("Unknown Error");
+    }
   } catch (error) {
     console.log("Vertex Shader Compilation Failed：", error);
   }
@@ -31,7 +31,7 @@ export function initShaders(
     const message = gl.getShaderInfoLog(fragmentShader);
     if (message && message.length > 0) {
       throw message;
-    } else throw new Error("Unknown Error");
+    }
   } catch (error) {
     console.log("Frament Shader Compilation Failed：", error);
   }
