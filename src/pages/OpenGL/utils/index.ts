@@ -1,39 +1,47 @@
-// @ts-nocheck
 export function initShaders(
   gl: WebGL2RenderingContext | null,
   vs: string,
-  fs: string
+  fs: string,
 ) {
   if (!gl) return;
-  let vertexShader, fragmentShader, program;
+  let vertexShader: WebGLShader | null = null;
+  let fragmentShader: WebGLShader | null = null;
+  let program: WebGLProgram | null = null;
 
   try {
-    // 参数为gl.VERTEX_SHADER 或 gl.FRAGMENT_SHADER两者中的一个。
-    vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    const vShader = gl.createShader(gl.VERTEX_SHADER);
+    if (!vShader) throw new Error("Unable to create vertex shader");
+    vertexShader = vShader;
     gl.shaderSource(vertexShader, vs);
     gl.compileShader(vertexShader);
     const message = gl.getShaderInfoLog(vertexShader);
-    if (message.length > 0) {
+    if (message && message.length > 0) {
       throw message;
-    }
+    } else throw new Error("Unknown Error");
   } catch (error) {
     console.log("Vertex Shader Compilation Failed：", error);
   }
 
   try {
-    fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    const fShader = gl.createShader(gl.FRAGMENT_SHADER);
+    if (!fShader) throw new Error("Unable to create fragment shader");
+    fragmentShader = fShader;
     gl.shaderSource(fragmentShader, fs);
     gl.compileShader(fragmentShader);
     const message = gl.getShaderInfoLog(fragmentShader);
-    if (message.length > 0) {
+    if (message && message.length > 0) {
       throw message;
-    }
+    } else throw new Error("Unknown Error");
   } catch (error) {
     console.log("Frament Shader Compilation Failed：", error);
   }
 
   try {
+    if (!vertexShader || !fragmentShader) {
+      throw new Error("Shader(s) not compiled successfully");
+    }
     program = gl.createProgram();
+    if (!program) throw new Error("Unable to create program");
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
@@ -47,6 +55,7 @@ export function initShaders(
     gl.deleteShader(fragmentShader);
   } catch (error) {
     console.log("Program Linking Failed：", error);
+    program = null;
   }
 
   return program;
