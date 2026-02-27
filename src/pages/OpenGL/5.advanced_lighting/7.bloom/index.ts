@@ -4,13 +4,20 @@ import { mat4, vec3 } from "gl-matrix";
 import Camera from "./class/CameraClass.ts";
 import CameraEventClass from "./class/CameraEventClass.ts";
 import MotionBlurEffect from "./class/MotionBlurEffect.ts";
-import shader_lighting, { shader_hdr } from "./shader/hdr.ts";
+import {
+  shader_bloom,
+  shader_bloom_light,
+  shader_bloom_final,
+  shader_blur,
+} from "./shader/index.ts";
 import { getProjection, setNormalMatrix, loadTexture } from "./utils/index.ts";
 
 export default class Constructor {
   gl!: WebGL2RenderingContext | null;
   shader!: ShaderClass;
-  hdrShader!: ShaderClass;
+  shaderLight!: ShaderClass;
+  shaderBlur!: ShaderClass;
+  shaderBloomFinal!: ShaderClass;
 
   camera!: Camera;
   cameraEvent!: CameraEventClass;
@@ -20,31 +27,33 @@ export default class Constructor {
   lastFrame: number = 0.0;
 
   lightPositions: vec3[] = [
-    vec3.fromValues(0.0, 0.0, 49.5),
-    vec3.fromValues(-1.4, -1.9, 9.0),
-    vec3.fromValues(0.0, -1.8, 4.0),
-    vec3.fromValues(0.8, -1.7, 6.0),
+    vec3.fromValues(0.0, 0.5, 1.5),
+    vec3.fromValues(-4.0, 0.5, -3.0),
+    vec3.fromValues(3.0, 0.5, 1.0),
+    vec3.fromValues(-0.8, 2.4, -1.0),
   ];
   lightColors: vec3[] = [
-    vec3.fromValues(200.0, 200.0, 200.0),
-    vec3.fromValues(0.1, 0.0, 0.0),
-    vec3.fromValues(0.0, 0.0, 0.2),
-    vec3.fromValues(0.0, 0.1, 0.0),
+    vec3.fromValues(5.0, 5.0, 5.0),
+    vec3.fromValues(10.0, 0.0, 0.0),
+    vec3.fromValues(0.0, 0.0, 15.0),
+    vec3.fromValues(0.0, 5.0, 0.0),
   ];
   heightScale: number = 0.1;
 
   woodTexture!: WebGLTexture;
+  containerTexture!: WebGLTexture;
 
   hdrFBO!: WebGLFramebuffer | null;
-  hdrColorBuffer!: WebGLTexture | null;
-  hdrdepthTexture!: WebGLTexture | null;
+  colorBuffers!: Array<WebGLTexture | null>;
+  pingpongFBO!: WebGLFramebuffer | null;
+  pingpongColorbuffers!: Array<WebGLTexture | null>;
 
   cubeVAO!: WebGLVertexArrayObject | null;
   cubeVBO!: WebGLBuffer | null;
   quadVAO!: WebGLVertexArrayObject | null;
   quadVBO!: WebGLBuffer | null;
 
-  hdr: boolean = true;
+  bloom: boolean = true;
   exposure: number = 1.0;
 
   // 当前视图投影矩阵
@@ -54,8 +63,10 @@ export default class Constructor {
     if (!canvas) return;
     this.gl = canvas.getContext("webgl2");
     // 编译着色器
-    this.shader = new ShaderClass(this.gl, shader_lighting);
-    this.hdrShader = new ShaderClass(this.gl, shader_hdr);
+    this.shader = new ShaderClass(this.gl, shader_bloom);
+    this.shaderLight = new ShaderClass(this.gl, shader_bloom_light);
+    this.shaderBlur = new ShaderClass(this.gl, shader_blur);
+    this.shaderBloomFinal = new ShaderClass(this.gl, shader_bloom_final);
 
     // 初始化相机
     this.camera = new Camera(vec3.fromValues(0.0, 0.0, 3.0));
@@ -73,24 +84,25 @@ export default class Constructor {
     // 初始化HDR帧缓冲区
     const {
       hdrFBO = null,
-      colorBuffer = null,
-      depthTexture = null,
+      colorBuffers = [],
+      pingpongFBO = null,
+      pingpongColorbuffers = [],
     } = this.createHDRFramebuffer() || {};
     this.hdrFBO = hdrFBO;
-    this.hdrColorBuffer = colorBuffer;
-    this.hdrdepthTexture = depthTexture;
+    this.colorBuffers = colorBuffers;
+    this.pingpongFBO = pingpongFBO;
+    this.pingpongColorbuffers = pingpongColorbuffers;
     // 初始化渲染管道
     this.init(this.gl);
   }
 
   initControlPanel() {
     const gui = new GUI();
-    // 添加运动模糊控制
     gui.add(this.motionBlurEffect, "enabled").name("运动模糊");
     gui.add(this.motionBlurEffect, "blurSamples", 4, 32, 1).name("采样数量");
     gui.add(this.motionBlurEffect, "blurScale", 0.1, 3.0).name("模糊强度");
-    // HDR（High Dynamic Range, 高动态范围）
-    gui.add(this, "hdr").name("是否开启HDR");
+    // 泛光(Bloom)
+    gui.add(this, "bloom").name("是否开启泛光");
     // 曝光
     gui.add(this, "exposure", 0, 10.0, 0.001).name("曝光");
   }
@@ -99,7 +111,10 @@ export default class Constructor {
     const gl = this.gl;
     if (!gl) return null;
 
-    // WebGL 2.0 需要启用 EXT_color_buffer_float 扩展才能渲染到浮点纹理：
+    const available_extensions = gl.getSupportedExtensions();
+    console.log(available_extensions);
+
+    // WebGL 2.0 需要启用 EXT_color_buffer_float 扩展才能渲染到浮点纹理
     const ext = gl.getExtension("EXT_color_buffer_float");
     if (!ext) {
       console.error("EXT_color_buffer_float not supported");
@@ -111,87 +126,94 @@ export default class Constructor {
 
     const hdrFBO = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFBO);
-    // create floating point color buffer
-    const colorBuffer = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, colorBuffer);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA16F,
+    // create 2 floating point color buffers (1 for normal rendering, other for brightness threshold values)
+    const colorBuffers = [gl.createTexture(), gl.createTexture()];
+    for (let i = 0; i < 2; i++) {
+      gl.bindTexture(gl.TEXTURE_2D, colorBuffers[i]);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA16F,
+        width,
+        height,
+        0,
+        gl.RGBA,
+        gl.FLOAT,
+        null,
+      );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      // attach texture to framebuffer
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0 + i,
+        gl.TEXTURE_2D,
+        colorBuffers[i],
+        0,
+      );
+    }
+    // create and attach depth buffer (renderbuffer)
+    const rboDepth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, rboDepth);
+    gl.renderbufferStorage(
+      gl.RENDERBUFFER,
+      gl.DEPTH_COMPONENT16,
       width,
       height,
-      0,
-      gl.RGBA,
-      gl.FLOAT,
-      null,
     );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    // create depth buffer (renderbuffer)
-    // const rboDepth = gl.createRenderbuffer();
-    // gl.bindRenderbuffer(gl.RENDERBUFFER, rboDepth);
-    // gl.renderbufferStorage(
-    //   gl.RENDERBUFFER,
-    //   gl.DEPTH_COMPONENT16,
-    //   width,
-    //   height,
-    // );
-    // // attach buffers
-    // gl.framebufferTexture2D(
-    //   gl.FRAMEBUFFER,
-    //   gl.COLOR_ATTACHMENT0,
-    //   gl.TEXTURE_2D,
-    //   colorBuffer,
-    //   0,
-    // );
-    // gl.framebufferRenderbuffer(
-    //   gl.FRAMEBUFFER,
-    //   gl.DEPTH_ATTACHMENT,
-    //   gl.RENDERBUFFER,
-    //   rboDepth,
-    // );
-
-    // 创建深度纹理（而不是 renderbuffer）
-    const depthTexture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.DEPTH_COMPONENT24,
-      width,
-      height,
-      0,
-      gl.DEPTH_COMPONENT,
-      gl.UNSIGNED_INT,
-      null,
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    // 附加缓冲区
-    gl.framebufferTexture2D(
-      gl.FRAMEBUFFER,
-      gl.COLOR_ATTACHMENT0,
-      gl.TEXTURE_2D,
-      colorBuffer,
-      0,
-    );
-    gl.framebufferTexture2D(
+    gl.framebufferRenderbuffer(
       gl.FRAMEBUFFER,
       gl.DEPTH_ATTACHMENT,
-      gl.TEXTURE_2D,
-      depthTexture,
-      0,
+      gl.RENDERBUFFER,
+      rboDepth,
     );
-
-    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) {
-      console.error("Framebuffer not complete");
+    // tell OpenGL which color attachments we'll use (of this framebuffer) for rendering
+    const attachments = [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1];
+    gl.drawBuffers(attachments);
+    // finally check if framebuffer is complete
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      console.log("Framebuffer not complete!");
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // ping-pong-framebuffer for blurring
+    const pingpongFBO = [gl.createFramebuffer(), gl.createFramebuffer()];
+    const pingpongColorbuffers = [gl.createTexture(), gl.createTexture()];
+    for (let i = 0; i < 2; i++) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, pingpongFBO[i]);
+      gl.bindTexture(gl.TEXTURE_2D, pingpongColorbuffers[i]);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        width,
+        height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        null,
+      );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        pingpongColorbuffers[i],
+        0,
+      );
+      if (
+        gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE
+      ) {
+        console.log("Framebuffer not complete!");
+      }
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return { hdrFBO, colorBuffer, depthTexture };
+    return { hdrFBO, colorBuffers, pingpongFBO, pingpongColorbuffers };
   }
 
   async init(gl: WebGL2RenderingContext | null) {
@@ -204,6 +226,14 @@ export default class Constructor {
     if (!this.woodTexture) {
       this.woodTexture = await loadTexture({
         path: new URL("./images/wood.png", import.meta.url).href,
+        gl,
+        gammaCorrection: true,
+      });
+    }
+
+    if (!this.containerTexture) {
+      this.containerTexture = await loadTexture({
+        path: new URL("./images/container2.png", import.meta.url).href,
         gl,
         gammaCorrection: true,
       });
@@ -232,23 +262,21 @@ export default class Constructor {
 
     this.renderScene();
 
-    if (this.motionBlurEffect.enabled) {
-      this.motionBlurEffect.renderSceneToFramebuffer(() => {
-        const currentFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
-        this.renderHDR(currentFBO);
-      });
-      this.motionBlurEffect.applyMotionBlur(this.hdrdepthTexture);
-    } else {
-      this.renderHDR();
-    }
+    // if (this.motionBlurEffect.enabled) {
+    //   this.motionBlurEffect.renderSceneToFramebuffer(() => {
+    //     const currentFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    //     this.renderHDR(currentFBO);
+    //   });
+    //   this.motionBlurEffect.applyMotionBlur(this.hdrdepthTexture);
+    // } else {
+    //   this.renderHDR();
+    // }
   }
 
   renderScene() {
     const gl = this.gl;
     if (!gl) return;
-    // 1. render scene into floating point framebuffer
-    // -----------------------------------------------
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.hdrFBO);
+    // gl.bindFramebuffer(gl.FRAMEBUFFER, this.hdrFBO);
     gl.enable(gl.DEPTH_TEST);
     gl.clearColor(0.1, 0.1, 0.1, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -268,12 +296,68 @@ export default class Constructor {
       this.shader.setVec3(`lights[${index}].Color`, color);
     }
     this.shader.setVec3("viewPos", this.camera.Position);
+    this.renderCubeToScene([0.0, -1.0, 0.0], [12.5, 0.5, 12.5]);
+    // then create multiple cubes as the scenery
+    this.renderSceneryCubes();
+  }
+
+  renderSceneryCubes() {
+    const gl = this.gl;
+    if (!gl) return;
+    gl.bindTexture(gl.TEXTURE_2D, this.containerTexture);
+    this.renderCubeToScene([0.0, 1.5, 0.0], [0.5, 0.5, 0.5]);
+    this.renderCubeToScene([2.0, 0.0, 1.0], [0.5, 0.5, 0.5]);
+    this.renderCubeToScene([-1.0, -1.0, 2.0], undefined, {
+      angle: 60.0,
+      axis: [1.0, 0.0, 1.0],
+    });
+    this.renderCubeToScene([0.0, 2.7, 4.0], [1.25, 1.25, 1.25], {
+      angle: 23.0,
+      axis: [1.0, 0.0, 1.0],
+    });
+    this.renderCubeToScene([-2.0, 1.0, -3.0], undefined, {
+      angle: 124.0,
+      axis: [1.0, 0.0, 1.0],
+    });
+    this.renderCubeToScene([-3.0, 0.0, 0.0], [0.5, 0.5, 0.5]);
+  }
+
+  renderCubeToScene(
+    translate: Array<number> | null | undefined = undefined,
+    scale: Array<number> | null | undefined = undefined,
+    rotate:
+      | { angle?: number; axis?: Array<number> }
+      | null
+      | undefined = undefined,
+  ) {
     const model = mat4.create();
-    mat4.translate(model, model, vec3.fromValues(0.0, 0.0, 25.0));
-    mat4.scale(model, model, vec3.fromValues(2.5, 2.5, 27.5));
+    if (translate) {
+      mat4.translate(
+        model,
+        model,
+        vec3.fromValues(translate[0], translate[1], translate[2]),
+      );
+    }
+    if (scale) {
+      mat4.scale(model, model, vec3.fromValues(scale[0], scale[1], scale[2]));
+    }
+    if (rotate) {
+      mat4.rotate(
+        model,
+        model,
+        rotate.angle || 0,
+        vec3.normalize(
+          vec3.create(),
+          vec3.fromValues(
+            rotate.axis?.[0] || 0.0,
+            rotate.axis?.[1] || 0.0,
+            rotate.axis?.[2] || 0.0,
+          ),
+        ),
+      );
+    }
     this.shader.setMat4("model", model);
     setNormalMatrix(this.shader, model);
-    this.shader.setInt("inverse_normals", 1);
     this.renderCube();
   }
 
@@ -286,7 +370,7 @@ export default class Constructor {
     this.hdrShader.setInt("hdrBuffer", 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.hdrColorBuffer);
-    this.hdrShader.setInt("hdr", this.hdr ? 1 : 0);
+    this.hdrShader.setInt("hdr", this.bloom ? 1 : 0);
     this.hdrShader.setFloat("exposure", this.exposure);
     this.renderQuad();
   }
@@ -371,6 +455,7 @@ export default class Constructor {
     gl.bindVertexArray(this.cubeVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 36);
   }
+
   renderQuad() {
     const gl = this.gl;
     if (!gl) return;
