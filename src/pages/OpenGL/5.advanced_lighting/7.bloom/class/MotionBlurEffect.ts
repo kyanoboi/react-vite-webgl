@@ -198,6 +198,10 @@ export default class MotionBlurEffect {
     renderFn();
   }
 
+  getSceneFramebuffer(): WebGLFramebuffer {
+    return this.sceneFramebuffer;
+  }
+
   /**
    * 应用运动模糊效果
    */

@@ -6,7 +6,7 @@ export default class ShaderClass {
   program: WebGLProgram | null;
   constructor(
     gl: WebGL2RenderingContext | null,
-    shader: { vs: string; fs: string }
+    shader: { vs: string; fs: string },
   ) {
     this.program = initShaders(gl, shader.vs, shader.fs) || null;
     this.gl = gl;
@@ -44,5 +44,10 @@ export default class ShaderClass {
   setInt(name: string, value: GLint) {
     const position = this.gl?.getUniformLocation(this.program!, name);
     this.gl?.uniform1i(position!, value);
+  }
+
+  setFloatArray(name: string, value: Float32Array) {
+    const position = this.gl?.getUniformLocation(this.program!, name);
+    this.gl?.uniform1fv(position!, value);
   }
 }

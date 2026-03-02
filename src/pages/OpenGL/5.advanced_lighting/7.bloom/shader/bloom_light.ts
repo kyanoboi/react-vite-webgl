@@ -1,4 +1,5 @@
 export const VSHADER_SOURCE: string = /* glsl */ `#version 300 es
+    precision highp float;
     layout (location = 0) in vec3 aPos;
     layout (location = 1) in vec3 aNormal;
     layout (location = 2) in vec2 aTexCoords;
@@ -22,7 +23,7 @@ export const VSHADER_SOURCE: string = /* glsl */ `#version 300 es
     }
 `;
 export const FSHADER_SOURCE: string = /* glsl */ `#version 300 es
-    precision mediump float;
+    precision highp float;
     layout (location = 0) out vec4 FragColor;
     layout (location = 1) out vec4 BrightColor;
 
@@ -40,7 +41,7 @@ export const FSHADER_SOURCE: string = /* glsl */ `#version 300 es
     void main() {
         FragColor = vec4(lightColor, 1.0);
         float brightness = dot(FragColor.rgb, vec3(0.2126, 0.7152, 0.0722));
-        if(brightness > 1.0)
+        if(brightness > 1.5)
             BrightColor = vec4(FragColor.rgb, 1.0);
         else
             BrightColor = vec4(0.0, 0.0, 0.0, 1.0);

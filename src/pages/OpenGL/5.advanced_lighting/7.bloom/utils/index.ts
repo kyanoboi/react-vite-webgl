@@ -117,6 +117,19 @@ export function loadTexture({
 
       gl.generateMipmap(gl.TEXTURE_2D);
 
+      // 开启各向异性过滤
+      const ext = gl.getExtension("EXT_texture_filter_anisotropic");
+      if (ext) {
+        const maxAnisotropy = gl.getParameter(
+          ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT,
+        );
+        gl.texParameterf(
+          gl.TEXTURE_2D,
+          ext.TEXTURE_MAX_ANISOTROPY_EXT,
+          maxAnisotropy,
+        );
+      }
+
       resolve(texture as WebGLTexture);
     };
 
