@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import Constructor from "./5.advanced_lighting/7.bloom";
+import Constructor from "./5.advanced_lighting/8.1.deferred_shading";
 
 const GL = () => {
   const contianer = useRef<HTMLCanvasElement | null>(null);
