@@ -6,7 +6,8 @@ import {
   CameraEventClass,
   ModelLoadClass,
 } from "@/pages/OpenGL/utils/class";
-import MotionBlurEffect from "./class/MotionBlurEffect.ts";
+import MotionBlurEffect from "@/pages/OpenGL/utils/class/PostProcess/Effect/MotionBlur";
+import PostProcessRenderer from "@/pages/OpenGL/utils/class/PostProcess/PostProcessRenderer.ts";
 import {
   shader_g_buffer,
   shader_deferred_shading,
@@ -22,7 +23,11 @@ export default class Constructor {
 
   camera!: Camera;
   cameraEvent!: CameraEventClass;
-  motionBlurEffect!: MotionBlurEffect;
+
+  // 后处理效果
+  postProcess!: PostProcessRenderer;
+  motionBlur!: MotionBlurEffect;
+  // 模型加载器
   modelLoader!: ModelLoadClass;
 
   projectionMatrix!: mat4;
@@ -82,8 +87,15 @@ export default class Constructor {
     canvas.height = canvas.clientHeight * window.devicePixelRatio;
     // 初始化视图端口
     this.gl?.viewport(0, 0, canvas.width, canvas.height);
-    // 初始化运动模糊效果（注意需要在视口设置之后）
-    this.motionBlurEffect = new MotionBlurEffect(this.gl!, canvas);
+    // 初始化后处理管线
+    this.postProcess = new PostProcessRenderer(
+      this.gl!,
+      canvas.width,
+      canvas.height,
+    );
+    this.motionBlur = new MotionBlurEffect(this.gl!);
+    // 注册效果（顺序即执行顺序）
+    this.postProcess.addEffect(this.motionBlur);
     // 初始化控制面板
     this.initControlPanel();
     // 检测WebGL2支持
@@ -105,9 +117,9 @@ export default class Constructor {
 
   initControlPanel() {
     const gui = new GUI();
-    gui.add(this.motionBlurEffect, "enabled").name("运动模糊");
-    gui.add(this.motionBlurEffect, "blurSamples", 4, 32, 1).name("采样数量");
-    gui.add(this.motionBlurEffect, "blurScale", 0.1, 3.0).name("模糊强度");
+    // gui.add(this.motionBlurEffect, "enabled").name("运动模糊");
+    // gui.add(this.motionBlurEffect, "blurSamples", 4, 32, 1).name("采样数量");
+    // gui.add(this.motionBlurEffect, "blurScale", 0.1, 3.0).name("模糊强度");
 
     // 模型上传
     const modelFolder = gui.addFolder("模型上传");
@@ -272,13 +284,9 @@ export default class Constructor {
     // 更新视图投影矩阵
     const view = this.camera.getViewMatrix();
     mat4.multiply(this.currViewProjMatrix, this.projectionMatrix, view);
-    this.motionBlurEffect.updateViewProjMatrix(this.currViewProjMatrix);
+    this.motionBlur.updateViewProjMatrix(this.currViewProjMatrix);
 
     this.renderScene();
-
-    // if (this.motionBlurEffect.enabled) {
-    // } else {
-    // }
   }
 
   renderScene() {
@@ -291,7 +299,6 @@ export default class Constructor {
     this.shaderGeometryPass.use();
     this.shaderGeometryPass.setMat4("view", this.camera.getViewMatrix());
     this.shaderGeometryPass.setMat4("projection", this.projectionMatrix);
-    // TODO: render scene geometry here and populate gbuffer's content
     for (let index = 0; index < this.objectPositions.length; index++) {
       const model = mat4.create();
       mat4.translate(model, model, this.objectPositions[index]);
@@ -306,7 +313,7 @@ export default class Constructor {
     }
     // 2. lighting pass: calculate lighting by iterating over a screen filled quad pixel-by-pixel using the gbuffer's content.
     // -----------------------------------------------------------------------------------------------------------------------
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcess.getSceneFBO());
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.shaderLightingPass.use();
     // bind gbuffer textures
@@ -329,7 +336,7 @@ export default class Constructor {
     // 2.5. copy content of geometry's depth buffer to default framebuffer's depth buffer
     // ----------------------------------------------------------------------------------
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.gBuffer);
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null); // write to default framebuffer
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.postProcess.getSceneFBO()); // write to default framebuffer
     // blit to default framebuffer. Note that this may or may not work as the internal formats of both the FBO and default framebuffer have to match.
     // the internal formats are implementation defined. This works on all of my systems, but if it doesn't on yours you'll likely have to write to the
     // depth buffer in another shader stage (or somehow see to match the default framebuffer's internal format with the FBO's internal format).
@@ -338,7 +345,12 @@ export default class Constructor {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     // 3. render lights on top of scene
     // --------------------------------
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcess.getSceneFBO());
     this.renderLightCubes();
+    this.postProcess.render({
+      colorTexture: this.postProcess.getSceneColorTexture(),
+      gPosition: this.gPosition!, // 传入需要的 G-Buffer 数据
+    });
   }
 
   renderLightCubes() {
