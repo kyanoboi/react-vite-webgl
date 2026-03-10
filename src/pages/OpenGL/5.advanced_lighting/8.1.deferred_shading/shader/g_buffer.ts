@@ -11,6 +11,7 @@ export const VSHADER_SOURCE: string = /* glsl */ `#version 300 es
     uniform mat4 model;
     uniform mat4 view;
     uniform mat4 projection;
+    uniform mat3 normalMatrix;
 
     void main()
     {
@@ -18,7 +19,6 @@ export const VSHADER_SOURCE: string = /* glsl */ `#version 300 es
         FragPos = worldPos.xyz; 
         TexCoords = aTexCoords;
         
-        mat3 normalMatrix = transpose(inverse(mat3(model)));
         Normal = normalMatrix * aNormal;
 
         gl_Position = projection * view * worldPos;

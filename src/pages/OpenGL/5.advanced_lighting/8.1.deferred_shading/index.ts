@@ -6,13 +6,14 @@ import {
   CameraEventClass,
   ModelLoadClass,
 } from "@/pages/OpenGL/utils/class";
-import MotionBlurEffect from "./class/MotionBlurEffect.ts";
+import MotionBlurEffect from "@/pages/OpenGL/utils/class/PostProcess/Effect/MotionBlur";
+import PostProcessRenderer from "@/pages/OpenGL/utils/class/PostProcess/PostProcessRenderer.ts";
 import {
   shader_g_buffer,
   shader_deferred_shading,
   shader_deferred_light_box,
 } from "./shader/index.ts";
-import { getProjection } from "./utils/index.ts";
+import { getProjection, setNormalMatrix } from "./utils/index.ts";
 
 export default class Constructor {
   gl!: WebGL2RenderingContext | null;
@@ -22,14 +23,21 @@ export default class Constructor {
 
   camera!: Camera;
   cameraEvent!: CameraEventClass;
-  motionBlurEffect!: MotionBlurEffect;
+
+  // 后处理效果
+  postProcess!: PostProcessRenderer;
+  motionBlur!: MotionBlurEffect;
+  // 模型加载器
   modelLoader!: ModelLoadClass;
+
+  projectionMatrix!: mat4;
 
   deltaTime: number = 0.0;
   lastFrame: number = 0.0;
 
   lightPositions!: vec3[];
   lightColors!: vec3[];
+  isInitLightUniforms: boolean = false;
 
   objectPositions: vec3[] = [
     vec3.fromValues(-3.0, -0.5, -3.0),
@@ -79,8 +87,15 @@ export default class Constructor {
     canvas.height = canvas.clientHeight * window.devicePixelRatio;
     // 初始化视图端口
     this.gl?.viewport(0, 0, canvas.width, canvas.height);
-    // 初始化运动模糊效果（注意需要在视口设置之后）
-    this.motionBlurEffect = new MotionBlurEffect(this.gl!, canvas);
+    // 初始化后处理管线
+    this.postProcess = new PostProcessRenderer(
+      this.gl!,
+      canvas.width,
+      canvas.height,
+    );
+    this.motionBlur = new MotionBlurEffect(this.gl!);
+    // 注册效果（顺序即执行顺序）
+    this.postProcess.addEffect(this.motionBlur);
     // 初始化控制面板
     this.initControlPanel();
     // 检测WebGL2支持
@@ -102,9 +117,9 @@ export default class Constructor {
 
   initControlPanel() {
     const gui = new GUI();
-    gui.add(this.motionBlurEffect, "enabled").name("运动模糊");
-    gui.add(this.motionBlurEffect, "blurSamples", 4, 32, 1).name("采样数量");
-    gui.add(this.motionBlurEffect, "blurScale", 0.1, 3.0).name("模糊强度");
+    // gui.add(this.motionBlurEffect, "enabled").name("运动模糊");
+    // gui.add(this.motionBlurEffect, "blurSamples", 4, 32, 1).name("采样数量");
+    // gui.add(this.motionBlurEffect, "blurScale", 0.1, 3.0).name("模糊强度");
 
     // 模型上传
     const modelFolder = gui.addFolder("模型上传");
@@ -221,77 +236,9 @@ export default class Constructor {
     return { lightPositions, lightColors };
   }
 
-  async init(gl: WebGL2RenderingContext | null) {
-    if (!gl) return;
-
-    const currentFrame = performance.now() / 1000;
-    this.deltaTime = currentFrame - this.lastFrame;
-    this.lastFrame = currentFrame;
-
-    gl.enable(gl.DEPTH_TEST);
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-    this.render();
-
-    this.cameraEvent?.updateCameraPosition(this.deltaTime);
-
-    requestAnimationFrame(() => this.init(this.gl));
-  }
-
-  render() {
+  initLightUniforms() {
     const gl = this.gl;
     if (!gl) return;
-    // 更新视图投影矩阵
-    const view = this.camera.getViewMatrix();
-    mat4.multiply(
-      this.currViewProjMatrix,
-      getProjection({ gl, camera: this.camera }),
-      view,
-    );
-    this.motionBlurEffect.updateViewProjMatrix(this.currViewProjMatrix);
-
-    this.renderScene();
-
-    // if (this.motionBlurEffect.enabled) {
-    // } else {
-    // }
-  }
-
-  renderScene() {
-    const gl = this.gl;
-    if (!gl) return;
-    // 1. geometry pass: render scene's geometry/color data into gbuffer
-    // -----------------------------------------------------------------
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.gBuffer);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    this.shaderGeometryPass.use();
-    const projection = getProjection({ gl, camera: this.camera });
-    this.shaderGeometryPass.setMat4("view", this.camera.getViewMatrix());
-    this.shaderGeometryPass.setMat4("projection", projection);
-    // TODO: render scene geometry here and populate gbuffer's content
-    for (let index = 0; index < this.objectPositions.length; index++) {
-      const model = mat4.create();
-      mat4.translate(model, model, this.objectPositions[index]);
-      mat4.scale(model, model, vec3.fromValues(0.5, 0.5, 0.5));
-      this.shaderGeometryPass.setMat4("model", model);
-
-      this.modelLoader.components.forEach((mesh) => {
-        this.modelLoader.renderMesh(mesh, this.shaderGeometryPass);
-      });
-    }
-    // 2. lighting pass: calculate lighting by iterating over a screen filled quad pixel-by-pixel using the gbuffer's content.
-    // -----------------------------------------------------------------------------------------------------------------------
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    this.shaderLightingPass.use();
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.gPosition);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.gNormal);
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.gAlbedoSpec);
     // send light relevant uniforms
     for (let i = 0; i < this.lightPositions.length; i++) {
       this.shaderLightingPass.setVec3(
@@ -308,13 +255,88 @@ export default class Constructor {
       this.shaderLightingPass.setFloat(`lights[${i}].Linear`, linear);
       this.shaderLightingPass.setFloat(`lights[${i}].Quadratic`, quadratic);
     }
+  }
+
+  async init(gl: WebGL2RenderingContext | null) {
+    if (!gl) return;
+
+    const currentFrame = performance.now() / 1000;
+    this.deltaTime = currentFrame - this.lastFrame;
+    this.lastFrame = currentFrame;
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+    this.projectionMatrix = getProjection({ gl, camera: this.camera });
+
+    this.render();
+
+    this.cameraEvent?.updateCameraPosition(this.deltaTime);
+
+    requestAnimationFrame(() => this.init(this.gl));
+  }
+
+  render() {
+    const gl = this.gl;
+    if (!gl) return;
+    // 更新视图投影矩阵
+    const view = this.camera.getViewMatrix();
+    mat4.multiply(this.currViewProjMatrix, this.projectionMatrix, view);
+    this.motionBlur.updateViewProjMatrix(this.currViewProjMatrix);
+
+    this.renderScene();
+  }
+
+  renderScene() {
+    const gl = this.gl;
+    if (!gl) return;
+    // 1. geometry pass: render scene's geometry/color data into gbuffer
+    // -----------------------------------------------------------------
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.gBuffer);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    this.shaderGeometryPass.use();
+    this.shaderGeometryPass.setMat4("view", this.camera.getViewMatrix());
+    this.shaderGeometryPass.setMat4("projection", this.projectionMatrix);
+    for (let index = 0; index < this.objectPositions.length; index++) {
+      const model = mat4.create();
+      mat4.translate(model, model, this.objectPositions[index]);
+      mat4.scale(model, model, vec3.fromValues(0.5, 0.5, 0.5));
+      this.shaderGeometryPass.setMat4("model", model);
+      setNormalMatrix(this.shaderGeometryPass, model);
+      if (this.modelLoader.components.length > 0) {
+        this.modelLoader.components.forEach((mesh) => {
+          this.modelLoader.renderMesh(mesh, this.shaderGeometryPass);
+        });
+      }
+    }
+    // 2. lighting pass: calculate lighting by iterating over a screen filled quad pixel-by-pixel using the gbuffer's content.
+    // -----------------------------------------------------------------------------------------------------------------------
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcess.getSceneFBO());
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    this.shaderLightingPass.use();
+    // bind gbuffer textures
+    this.shaderLightingPass.setInt("gPosition", 0);
+    this.shaderLightingPass.setInt("gNormal", 1);
+    this.shaderLightingPass.setInt("gAlbedoSpec", 2);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.gPosition);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.gNormal);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.gAlbedoSpec);
+    if (!this.isInitLightUniforms) {
+      this.initLightUniforms();
+      this.isInitLightUniforms = true;
+    }
     this.shaderLightingPass.setVec3("viewPos", this.camera.Position);
     // finally render quad
     this.renderQuad();
     // 2.5. copy content of geometry's depth buffer to default framebuffer's depth buffer
     // ----------------------------------------------------------------------------------
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.gBuffer);
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null); // write to default framebuffer
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.postProcess.getSceneFBO()); // write to default framebuffer
     // blit to default framebuffer. Note that this may or may not work as the internal formats of both the FBO and default framebuffer have to match.
     // the internal formats are implementation defined. This works on all of my systems, but if it doesn't on yours you'll likely have to write to the
     // depth buffer in another shader stage (or somehow see to match the default framebuffer's internal format with the FBO's internal format).
@@ -323,7 +345,12 @@ export default class Constructor {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     // 3. render lights on top of scene
     // --------------------------------
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.postProcess.getSceneFBO());
     this.renderLightCubes();
+    this.postProcess.render({
+      colorTexture: this.postProcess.getSceneColorTexture(),
+      gPosition: this.gPosition!, // 传入需要的 G-Buffer 数据
+    });
   }
 
   renderLightCubes() {
