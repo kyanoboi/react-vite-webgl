@@ -12,7 +12,7 @@ import {
   shader_deferred_shading,
   shader_deferred_light_box,
 } from "./shader/index.ts";
-import { getProjection } from "./utils/index.ts";
+import { getProjection, setNormalMatrix } from "./utils/index.ts";
 
 export default class Constructor {
   gl!: WebGL2RenderingContext | null;
@@ -25,11 +25,14 @@ export default class Constructor {
   motionBlurEffect!: MotionBlurEffect;
   modelLoader!: ModelLoadClass;
 
+  projectionMatrix!: mat4;
+
   deltaTime: number = 0.0;
   lastFrame: number = 0.0;
 
   lightPositions!: vec3[];
   lightColors!: vec3[];
+  isInitLightUniforms: boolean = false;
 
   objectPositions: vec3[] = [
     vec3.fromValues(-3.0, -0.5, -3.0),
@@ -221,6 +224,27 @@ export default class Constructor {
     return { lightPositions, lightColors };
   }
 
+  initLightUniforms() {
+    const gl = this.gl;
+    if (!gl) return;
+    // send light relevant uniforms
+    for (let i = 0; i < this.lightPositions.length; i++) {
+      this.shaderLightingPass.setVec3(
+        `lights[${i}].Position`,
+        this.lightPositions[i],
+      );
+      this.shaderLightingPass.setVec3(
+        `lights[${i}].Color`,
+        this.lightColors[i],
+      );
+      // update attenuation parameters and calculate radius
+      const linear = 0.7;
+      const quadratic = 1.8;
+      this.shaderLightingPass.setFloat(`lights[${i}].Linear`, linear);
+      this.shaderLightingPass.setFloat(`lights[${i}].Quadratic`, quadratic);
+    }
+  }
+
   async init(gl: WebGL2RenderingContext | null) {
     if (!gl) return;
 
@@ -232,6 +256,8 @@ export default class Constructor {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+    this.projectionMatrix = getProjection({ gl, camera: this.camera });
 
     this.render();
 
@@ -245,11 +271,7 @@ export default class Constructor {
     if (!gl) return;
     // 更新视图投影矩阵
     const view = this.camera.getViewMatrix();
-    mat4.multiply(
-      this.currViewProjMatrix,
-      getProjection({ gl, camera: this.camera }),
-      view,
-    );
+    mat4.multiply(this.currViewProjMatrix, this.projectionMatrix, view);
     this.motionBlurEffect.updateViewProjMatrix(this.currViewProjMatrix);
 
     this.renderScene();
@@ -267,46 +289,39 @@ export default class Constructor {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.gBuffer);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.shaderGeometryPass.use();
-    const projection = getProjection({ gl, camera: this.camera });
     this.shaderGeometryPass.setMat4("view", this.camera.getViewMatrix());
-    this.shaderGeometryPass.setMat4("projection", projection);
+    this.shaderGeometryPass.setMat4("projection", this.projectionMatrix);
     // TODO: render scene geometry here and populate gbuffer's content
     for (let index = 0; index < this.objectPositions.length; index++) {
       const model = mat4.create();
       mat4.translate(model, model, this.objectPositions[index]);
       mat4.scale(model, model, vec3.fromValues(0.5, 0.5, 0.5));
       this.shaderGeometryPass.setMat4("model", model);
-
-      this.modelLoader.components.forEach((mesh) => {
-        this.modelLoader.renderMesh(mesh, this.shaderGeometryPass);
-      });
+      setNormalMatrix(this.shaderGeometryPass, model);
+      if (this.modelLoader.components.length > 0) {
+        this.modelLoader.components.forEach((mesh) => {
+          this.modelLoader.renderMesh(mesh, this.shaderGeometryPass);
+        });
+      }
     }
     // 2. lighting pass: calculate lighting by iterating over a screen filled quad pixel-by-pixel using the gbuffer's content.
     // -----------------------------------------------------------------------------------------------------------------------
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.shaderLightingPass.use();
+    // bind gbuffer textures
+    this.shaderLightingPass.setInt("gPosition", 0);
+    this.shaderLightingPass.setInt("gNormal", 1);
+    this.shaderLightingPass.setInt("gAlbedoSpec", 2);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.gPosition);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.gNormal);
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.gAlbedoSpec);
-    // send light relevant uniforms
-    for (let i = 0; i < this.lightPositions.length; i++) {
-      this.shaderLightingPass.setVec3(
-        `lights[${i}].Position`,
-        this.lightPositions[i],
-      );
-      this.shaderLightingPass.setVec3(
-        `lights[${i}].Color`,
-        this.lightColors[i],
-      );
-      // update attenuation parameters and calculate radius
-      const linear = 0.7;
-      const quadratic = 1.8;
-      this.shaderLightingPass.setFloat(`lights[${i}].Linear`, linear);
-      this.shaderLightingPass.setFloat(`lights[${i}].Quadratic`, quadratic);
+    if (!this.isInitLightUniforms) {
+      this.initLightUniforms();
+      this.isInitLightUniforms = true;
     }
     this.shaderLightingPass.setVec3("viewPos", this.camera.Position);
     // finally render quad
