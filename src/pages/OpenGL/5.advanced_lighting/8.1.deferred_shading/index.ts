@@ -1,19 +1,23 @@
 import GUI from "lil-gui";
-import ShaderClass from "../../utils/class/ShaderClass.ts";
 import { mat4, vec3 } from "gl-matrix";
 import {
+  getProjection,
+  setNormalMatrix,
+  checkWebGL2Support,
+} from "@/pages/OpenGL/utils";
+import {
+  ShaderClass,
   Camera,
   CameraEventClass,
   ModelLoadClass,
 } from "@/pages/OpenGL/utils/class";
-import MotionBlurEffect from "@/pages/OpenGL/utils/class/PostProcess/Effect/MotionBlur";
-import PostProcessRenderer from "@/pages/OpenGL/utils/class/PostProcess/PostProcessRenderer.ts";
+import MotionBlurEffect from "@/pages/OpenGL/utils/postprocess/Effect/MotionBlur/index.ts";
+import PostProcessRenderer from "@/pages/OpenGL/utils/postprocess/PostProcessRenderer.ts";
 import {
   shader_g_buffer,
   shader_deferred_shading,
   shader_deferred_light_box,
 } from "./shader/index.ts";
-import { getProjection, setNormalMatrix } from "./utils/index.ts";
 
 export default class Constructor {
   gl!: WebGL2RenderingContext | null;
@@ -72,6 +76,8 @@ export default class Constructor {
       depth: true,
       stencil: true, // ← 让默认帧缓冲使用 DEPTH24_STENCIL8
     });
+    // 检测WebGL2支持
+    checkWebGL2Support(this.gl);
     // 编译着色器
     this.shaderGeometryPass = new ShaderClass(this.gl, shader_g_buffer);
     this.shaderLightingPass = new ShaderClass(this.gl, shader_deferred_shading);
@@ -98,8 +104,6 @@ export default class Constructor {
     this.postProcess.addEffect(this.motionBlur);
     // 初始化控制面板
     this.initControlPanel();
-    // 检测WebGL2支持
-    this.checkWebGL2Support();
     // 初始化GBuffer帧缓冲区
     // prettier-ignore
     const { gBuffer, gPosition, gNormal, gAlbedoSpec } = this.initGBufferFramebuffer() || {};
@@ -117,31 +121,9 @@ export default class Constructor {
 
   initControlPanel() {
     const gui = new GUI();
-    // gui.add(this.motionBlurEffect, "enabled").name("运动模糊");
-    // gui.add(this.motionBlurEffect, "blurSamples", 4, 32, 1).name("采样数量");
-    // gui.add(this.motionBlurEffect, "blurScale", 0.1, 3.0).name("模糊强度");
-
     // 模型上传
     const modelFolder = gui.addFolder("模型上传");
     modelFolder.add(this, "loadModel").name("加载模型");
-  }
-
-  checkWebGL2Support() {
-    const gl = this.gl;
-    if (!gl) return null;
-    const available_extensions = gl.getSupportedExtensions();
-    console.log("Available extensions:");
-    console.table(available_extensions);
-
-    // WebGL 2.0 需要启用 EXT_color_buffer_float 扩展才能渲染到浮点纹理
-    const ext = gl.getExtension("EXT_color_buffer_float");
-    if (!ext) {
-      console.error("EXT_color_buffer_float not supported");
-      return alert(
-        "Your browser does not support the EXT_color_buffer_float extension, which is required for this demo.",
-      );
-    }
-    return console.log("EXT_color_buffer_float is supported");
   }
 
   initGBufferFramebuffer() {
