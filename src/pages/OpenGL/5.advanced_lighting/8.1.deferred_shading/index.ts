@@ -13,7 +13,7 @@ import {
   shader_deferred_shading,
   shader_deferred_light_box,
 } from "./shader/index.ts";
-import { getProjection, setNormalMatrix } from "./utils/index.ts";
+import { getProjection, setNormalMatrix } from "@/pages/OpenGL/utils";
 
 export default class Constructor {
   gl!: WebGL2RenderingContext | null;
