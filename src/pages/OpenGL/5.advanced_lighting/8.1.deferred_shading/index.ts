@@ -121,9 +121,7 @@ export default class Constructor {
 
   initControlPanel() {
     const gui = new GUI();
-    // 模型上传
-    const modelFolder = gui.addFolder("模型上传");
-    modelFolder.add(this, "loadModel").name("加载模型");
+    gui.add(this, "loadModel").name("加载模型");
   }
 
   initGBufferFramebuffer() {
