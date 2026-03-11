@@ -1,19 +1,19 @@
 import GUI from "lil-gui";
-import ShaderClass from "../../utils/class/ShaderClass.ts";
 import { mat4, vec3 } from "gl-matrix";
+import { getProjection, setNormalMatrix } from "@/pages/OpenGL/utils";
 import {
+  ShaderClass,
   Camera,
   CameraEventClass,
   ModelLoadClass,
 } from "@/pages/OpenGL/utils/class";
-import MotionBlurEffect from "@/pages/OpenGL/utils/class/PostProcess/Effect/MotionBlur";
-import PostProcessRenderer from "@/pages/OpenGL/utils/class/PostProcess/PostProcessRenderer.ts";
+import MotionBlurEffect from "@/pages/OpenGL/utils/postprocess/Effect/MotionBlur/index.ts";
+import PostProcessRenderer from "@/pages/OpenGL/utils/postprocess/PostProcessRenderer.ts";
 import {
   shader_g_buffer,
   shader_deferred_shading,
   shader_deferred_light_box,
 } from "./shader/index.ts";
-import { getProjection, setNormalMatrix } from "@/pages/OpenGL/utils";
 
 export default class Constructor {
   gl!: WebGL2RenderingContext | null;

@@ -1,4 +1,4 @@
-import ShaderClass from "../../../utils/class/ShaderClass.ts";
+import ShaderClass from "../class/ShaderClass.ts";
 import { PostProcessEffect, PostProcessInput } from "./PostProcessEffect.ts";
 
 // ─── Passthrough Shader（用于无效果时直接输出到屏幕）───────────────────────────
