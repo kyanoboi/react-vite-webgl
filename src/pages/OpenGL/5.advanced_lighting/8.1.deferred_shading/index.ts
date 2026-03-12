@@ -4,6 +4,8 @@ import {
   getProjection,
   setNormalMatrix,
   checkWebGL2Support,
+  renderQuad,
+  renderCube,
 } from "@/pages/OpenGL/utils";
 import {
   ShaderClass,
@@ -61,10 +63,9 @@ export default class Constructor {
   gNormal!: WebGLFramebuffer | null;
   gAlbedoSpec!: WebGLTexture | null;
 
+  // 缓存渲染对象VAO
   cubeVAO!: WebGLVertexArrayObject | null;
-  cubeVBO!: WebGLBuffer | null;
   quadVAO!: WebGLVertexArrayObject | null;
-  quadVBO!: WebGLBuffer | null;
 
   // 当前视图投影矩阵
   currViewProjMatrix: mat4 = mat4.create();
@@ -312,7 +313,7 @@ export default class Constructor {
     }
     this.shaderLightingPass.setVec3("viewPos", this.camera.Position);
     // finally render quad
-    this.renderQuad();
+    this.quadVAO = renderQuad(gl, this.quadVAO);
     // 2.5. copy content of geometry's depth buffer to default framebuffer's depth buffer
     // ----------------------------------------------------------------------------------
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.gBuffer);
@@ -349,133 +350,8 @@ export default class Constructor {
       mat4.scale(model, model, vec3.fromValues(0.125, 0.125, 0.125));
       this.shaderLightBox.setMat4("model", model);
       this.shaderLightBox.setVec3("lightColor", this.lightColors[i]);
-      this.renderCube();
+      this.cubeVAO = renderCube(gl, this.cubeVAO);
     }
-  }
-
-  renderCube() {
-    const gl = this.gl;
-    if (!gl) return;
-    if (!this.cubeVAO) {
-      // prettier-ignore
-      const vertices = new Float32Array([
-        // back face
-        -1.0, -1.0, -1.0,  0.0,  0.0, -1.0, 0.0, 0.0, // bottom-left
-          1.0,  1.0, -1.0,  0.0,  0.0, -1.0, 1.0, 1.0, // top-right
-          1.0, -1.0, -1.0,  0.0,  0.0, -1.0, 1.0, 0.0, // bottom-right         
-          1.0,  1.0, -1.0,  0.0,  0.0, -1.0, 1.0, 1.0, // top-right
-        -1.0, -1.0, -1.0,  0.0,  0.0, -1.0, 0.0, 0.0, // bottom-left
-        -1.0,  1.0, -1.0,  0.0,  0.0, -1.0, 0.0, 1.0, // top-left
-        // front face
-        -1.0, -1.0,  1.0,  0.0,  0.0,  1.0, 0.0, 0.0, // bottom-left
-          1.0, -1.0,  1.0,  0.0,  0.0,  1.0, 1.0, 0.0, // bottom-right
-          1.0,  1.0,  1.0,  0.0,  0.0,  1.0, 1.0, 1.0, // top-right
-          1.0,  1.0,  1.0,  0.0,  0.0,  1.0, 1.0, 1.0, // top-right
-        -1.0,  1.0,  1.0,  0.0,  0.0,  1.0, 0.0, 1.0, // top-left
-        -1.0, -1.0,  1.0,  0.0,  0.0,  1.0, 0.0, 0.0, // bottom-left
-        // left face
-        -1.0,  1.0,  1.0, -1.0,  0.0,  0.0, 1.0, 0.0, // top-right
-        -1.0,  1.0, -1.0, -1.0,  0.0,  0.0, 1.0, 1.0, // top-left
-        -1.0, -1.0, -1.0, -1.0,  0.0,  0.0, 0.0, 1.0, // bottom-left
-        -1.0, -1.0, -1.0, -1.0,  0.0,  0.0, 0.0, 1.0, // bottom-left
-        -1.0, -1.0,  1.0, -1.0,  0.0,  0.0, 0.0, 0.0, // bottom-right
-        -1.0,  1.0,  1.0, -1.0,  0.0,  0.0, 1.0, 0.0, // top-right
-        // right face
-          1.0,  1.0,  1.0,  1.0,  0.0,  0.0, 1.0, 0.0, // top-left
-          1.0, -1.0, -1.0,  1.0,  0.0,  0.0, 0.0, 1.0, // bottom-right
-          1.0,  1.0, -1.0,  1.0,  0.0,  0.0, 1.0, 1.0, // top-right         
-          1.0, -1.0, -1.0,  1.0,  0.0,  0.0, 0.0, 1.0, // bottom-right
-          1.0,  1.0,  1.0,  1.0,  0.0,  0.0, 1.0, 0.0, // top-left
-          1.0, -1.0,  1.0,  1.0,  0.0,  0.0, 0.0, 0.0, // bottom-left     
-        // bottom face
-        -1.0, -1.0, -1.0,  0.0, -1.0,  0.0, 0.0, 1.0, // top-right
-          1.0, -1.0, -1.0,  0.0, -1.0,  0.0, 1.0, 1.0, // top-left
-          1.0, -1.0,  1.0,  0.0, -1.0,  0.0, 1.0, 0.0, // bottom-left
-          1.0, -1.0,  1.0,  0.0, -1.0,  0.0, 1.0, 0.0, // bottom-left
-        -1.0, -1.0,  1.0,  0.0, -1.0,  0.0, 0.0, 0.0, // bottom-right
-        -1.0, -1.0, -1.0,  0.0, -1.0,  0.0, 0.0, 1.0, // top-right
-        // top face
-        -1.0,  1.0, -1.0,  0.0,  1.0,  0.0, 0.0, 1.0, // top-left
-          1.0,  1.0 , 1.0,  0.0,  1.0,  0.0, 1.0, 0.0, // bottom-right
-          1.0,  1.0, -1.0,  0.0,  1.0,  0.0, 1.0, 1.0, // top-right     
-          1.0,  1.0,  1.0,  0.0,  1.0,  0.0, 1.0, 0.0, // bottom-right
-        -1.0,  1.0, -1.0,  0.0,  1.0,  0.0, 0.0, 1.0, // top-left
-        -1.0,  1.0,  1.0,  0.0,  1.0,  0.0, 0.0, 0.0  // bottom-left   
-      ])
-
-      // 创建并配置VAO
-      this.cubeVAO = gl.createVertexArray();
-      gl.bindVertexArray(this.cubeVAO);
-
-      this.cubeVBO = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.cubeVBO);
-      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-
-      const FSIZE = Float32Array.BYTES_PER_ELEMENT;
-      const stride = 8 * FSIZE;
-
-      // 位置属性 (location 0)
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
-
-      // 法线属性 (location 1)
-      gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 3 * FSIZE);
-
-      // 纹理坐标属性 (location 2)
-      gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 6 * FSIZE);
-
-      gl.bindVertexArray(null);
-    }
-
-    // 绘制
-    gl.bindVertexArray(this.cubeVAO);
-    gl.drawArrays(gl.TRIANGLES, 0, 36);
-  }
-
-  /**
-   * renders a 1x1 XY quad in NDC
-   * @return {*}
-   */
-  renderQuad() {
-    const gl = this.gl;
-    if (!gl) return;
-    if (!this.quadVAO) {
-      // prettier-ignore
-      const quadVertices = new Float32Array([
-        // positions     // texture Coords
-        -1.0,  1.0, 0.0, 0.0, 1.0,
-        -1.0, -1.0, 0.0, 0.0, 0.0,
-        1.0,  1.0, 0.0, 1.0, 1.0,
-        1.0, -1.0, 0.0, 1.0, 0.0,
-      ]);
-
-      // 创建并配置VAO
-      this.quadVAO = gl.createVertexArray();
-      gl.bindVertexArray(this.quadVAO);
-
-      this.quadVBO = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.quadVBO);
-      gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
-
-      const FSIZE = Float32Array.BYTES_PER_ELEMENT;
-      const stride = 5 * FSIZE;
-
-      // 位置属性 (location 0)
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
-
-      // 纹理坐标属性 (location 1)
-      gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, stride, 3 * FSIZE);
-
-      gl.bindVertexArray(null);
-    }
-
-    // 绘制
-    gl.bindVertexArray(this.quadVAO);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
   loadModel() {
