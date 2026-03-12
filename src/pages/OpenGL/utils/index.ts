@@ -2,99 +2,11 @@ import ShaderClass from "@/pages/OpenGL/utils/class/ShaderClass.ts";
 import Camera from "@/pages/OpenGL/utils/class/CameraClass.ts";
 import { mat4, mat3 } from "gl-matrix";
 
-/**
- * 检查WebGL2支持性
- * @export
- * @param {(WebGL2RenderingContext | null)} gl
- * @return {*}
- */
-export function checkWebGL2Support(gl: WebGL2RenderingContext | null) {
-  if (!gl) return null;
-  const available_extensions = gl.getSupportedExtensions();
-  console.log("Available extensions:");
-  console.table(available_extensions);
-
-  // WebGL 2.0 需要启用 EXT_color_buffer_float 扩展才能渲染到浮点纹理
-  const ext = gl.getExtension("EXT_color_buffer_float");
-  if (!ext) {
-    console.error("EXT_color_buffer_float not supported");
-    return alert(
-      "Your browser does not support the EXT_color_buffer_float extension, which is required for this demo.",
-    );
-  }
-  return console.log("EXT_color_buffer_float is supported");
-}
-
-/**
- * 初始化着色器
- * @export
- * @param {(WebGL2RenderingContext | null)} gl
- * @param {string} vs
- * @param {string} fs
- * @return {*}
- */
-export function initShaders(
-  gl: WebGL2RenderingContext | null,
-  vs: string,
-  fs: string,
-) {
-  if (!gl) return;
-  let vertexShader: WebGLShader | null = null;
-  let fragmentShader: WebGLShader | null = null;
-  let program: WebGLProgram | null = null;
-
-  try {
-    const vShader = gl.createShader(gl.VERTEX_SHADER);
-    if (!vShader) throw new Error("Unable to create vertex shader");
-    vertexShader = vShader;
-    gl.shaderSource(vertexShader, vs);
-    gl.compileShader(vertexShader);
-    const message = gl.getShaderInfoLog(vertexShader);
-    if (message && message.length > 0) {
-      throw message;
-    }
-  } catch (error) {
-    console.log("Vertex Shader Compilation Failed：", error);
-  }
-
-  try {
-    const fShader = gl.createShader(gl.FRAGMENT_SHADER);
-    if (!fShader) throw new Error("Unable to create fragment shader");
-    fragmentShader = fShader;
-    gl.shaderSource(fragmentShader, fs);
-    gl.compileShader(fragmentShader);
-    const message = gl.getShaderInfoLog(fragmentShader);
-    if (message && message.length > 0) {
-      throw message;
-    }
-  } catch (error) {
-    console.log("Frament Shader Compilation Failed：", error);
-  }
-
-  try {
-    if (!vertexShader || !fragmentShader) {
-      throw new Error("Shader(s) not compiled successfully");
-    }
-    program = gl.createProgram();
-    if (!program) throw new Error("Unable to create program");
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      const info = gl.getProgramInfoLog(program);
-      throw info;
-    }
-
-    gl.deleteShader(vertexShader);
-    gl.deleteShader(fragmentShader);
-  } catch (error) {
-    console.log("Program Linking Failed：", error);
-    program = null;
-  }
-
-  return program;
-}
+export { renderQuad } from "./functions/renderQuad";
+export { renderCube } from "./functions/renderCube";
+export { checkWebGL2Support } from "./functions/checkWebGL2Support";
+export { initShaders } from "./functions/initShaders";
+export { loadTexture } from "./functions/loadTexture";
 
 /**
  * setNormalMatrix
@@ -104,9 +16,8 @@ export function initShaders(
  * @param {mat4} model
  */
 export function setNormalMatrix(shader: ShaderClass, model: mat4) {
-  // 创建新的矩阵,而不是引用
   const normalMatrix = mat4.create();
-  mat4.copy(normalMatrix, model); // 复制 model 的值
+  mat4.copy(normalMatrix, model);
   mat4.invert(normalMatrix, normalMatrix);
   mat4.transpose(normalMatrix, normalMatrix);
   shader.setMat3("normalMatrix", mat3.fromMat4(mat3.create(), normalMatrix));
@@ -137,104 +48,4 @@ export function getProjection({
   const near = 0.1;
   const far = 100.0;
   return mat4.perspective(mat4.create(), fovy, aspect, near, far);
-}
-
-/**
- * Loads a texture from the given path and uploads it to the GPU
- *
- * @export
- * @param {({
- *   path: string ;
- *   gammaCorrection?: boolean;
- *   gl: WebGL2RenderingContext;
- * })} {
- *   path,
- *   gammaCorrection = false,
- *   gl,
- * }
- * @return {*}  {Promise<WebGLTexture>}
- */
-export function loadTexture({
-  path,
-  gammaCorrection = false,
-  gl,
-}: {
-  path: string;
-  gammaCorrection?: boolean;
-  gl: WebGL2RenderingContext;
-}): Promise<WebGLTexture> {
-  return new Promise((resolve, reject) => {
-    if (!gl) return reject(new Error("No WebGL context"));
-
-    const texture = gl.createTexture();
-    if (!texture) return reject(new Error("Failed to create texture"));
-
-    const image = new Image();
-
-    image.onload = () => {
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-
-      let internalFormat: number;
-      let format: number;
-
-      if (gammaCorrection) {
-        internalFormat = gl.SRGB8_ALPHA8;
-        format = gl.RGBA;
-      } else {
-        internalFormat = gl.RGBA8;
-        format = gl.RGBA;
-      }
-
-      try {
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          internalFormat,
-          format,
-          gl.UNSIGNED_BYTE,
-          image,
-        );
-      } catch (e) {
-        console.error("texImage2D error:", e);
-        reject(new Error(`Failed to upload texture: ${e}`));
-        return;
-      }
-
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-      gl.texParameteri(
-        gl.TEXTURE_2D,
-        gl.TEXTURE_MIN_FILTER,
-        gl.LINEAR_MIPMAP_LINEAR,
-      );
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-
-      gl.generateMipmap(gl.TEXTURE_2D);
-
-      // 开启各向异性过滤
-      const ext = gl.getExtension("EXT_texture_filter_anisotropic");
-      if (ext) {
-        const maxAnisotropy = gl.getParameter(
-          ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT,
-        );
-        gl.texParameterf(
-          gl.TEXTURE_2D,
-          ext.TEXTURE_MAX_ANISOTROPY_EXT,
-          maxAnisotropy,
-        );
-      }
-
-      resolve(texture as WebGLTexture);
-    };
-
-    image.onerror = () => {
-      reject(new Error(`Failed to load image: ${image.src}`));
-    };
-
-    image.onabort = () => {
-      reject(new Error(`Image load aborted: ${image.src}`));
-    };
-
-    image.src = path;
-  });
 }
