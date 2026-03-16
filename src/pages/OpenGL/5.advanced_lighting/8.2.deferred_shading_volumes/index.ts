@@ -231,10 +231,23 @@ export default class Constructor {
         this.lightColors[i],
       );
       // update attenuation parameters and calculate radius
+      const constant = 1.0; // note that we don't send this to the shader, we assume it is always 1.0 (in our case)
       const linear = 0.7;
       const quadratic = 1.8;
       this.shaderLightingPass.setFloat(`lights[${i}].Linear`, linear);
       this.shaderLightingPass.setFloat(`lights[${i}].Quadratic`, quadratic);
+      // then calculate radius of light volume/sphere
+      const maxBrightness = Math.max(
+        this.lightColors[i][0],
+        this.lightColors[i][1],
+        this.lightColors[i][2],
+      );
+      const sqrt = Math.sqrt(
+        linear ** 2 - 4 * quadratic * (constant - 51.2 * maxBrightness),
+      );
+      const radius = (-linear + sqrt) / (2.0 * quadratic);
+
+      this.shaderLightingPass.setFloat(`lights[${i}].Radius`, radius * 100);
     }
   }
 
