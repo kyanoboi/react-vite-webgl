@@ -32,6 +32,7 @@ export const FSHADER_SOURCE: string = /* glsl */ `#version 300 es
     const vec2 noiseScale = vec2(800.0/4.0, 600.0/4.0); 
 
     uniform mat4 projection;
+    uniform int isOpenSSAO;
     uniform float ssaoStrength;
 
     void main()
@@ -46,28 +47,33 @@ export const FSHADER_SOURCE: string = /* glsl */ `#version 300 es
         mat3 TBN = mat3(tangent, bitangent, normal);
         // iterate over the sample kernel and calculate occlusion factor
         float occlusion = 0.0;
-        for(int i = 0; i < kernelSize; ++i)
-        {
-            // get sample position
-            vec3 samplePos = TBN * samples[i]; // from tangent to view-space
-            samplePos = fragPos + samplePos * radius; 
-            
-            // project sample position (to sample texture) (to get position on screen/texture)
-            vec4 offset = vec4(samplePos, 1.0);
-            offset = projection * offset; // from view to clip-space
-            offset.xyz /= offset.w; // perspective divide
-            offset.xyz = offset.xyz * 0.5 + 0.5; // transform to range 0.0 - 1.0
-            
-            // get sample depth
-            float sampleDepth = texture(gPosition, offset.xy).z; // get depth value of kernel sample
-            
-            // range check & accumulate
-            float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
-            occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;           
+        if (isOpenSSAO == 1) {
+            for(int i = 0; i < kernelSize; ++i)
+            {
+                // get sample position
+                vec3 samplePos = TBN * samples[i]; // from tangent to view-space
+                samplePos = fragPos + samplePos * radius; 
+                
+                // project sample position (to sample texture) (to get position on screen/texture)
+                vec4 offset = vec4(samplePos, 1.0);
+                offset = projection * offset; // from view to clip-space
+                offset.xyz /= offset.w; // perspective divide
+                offset.xyz = offset.xyz * 0.5 + 0.5; // transform to range 0.0 - 1.0
+                
+                // get sample depth
+                float sampleDepth = texture(gPosition, offset.xy).z; // get depth value of kernel sample
+                
+                // range check & accumulate
+                float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
+                occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;           
+            }
+            occlusion = 1.0 - (occlusion / float(kernelSize));
+            occlusion = pow(occlusion, ssaoStrength);
+        } else {
+            occlusion = 1.0; // no occlusion when SSAO is disabled
         }
-        occlusion = 1.0 - (occlusion / float(kernelSize));
         
-        FragColor = pow(occlusion, ssaoStrength);
+        FragColor = occlusion;
     }
 `;
 
