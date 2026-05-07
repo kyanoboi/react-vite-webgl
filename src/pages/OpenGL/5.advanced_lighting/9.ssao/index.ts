@@ -379,6 +379,7 @@ export default class Constructor {
     this.shaderSSAO.setInt("gPosition", 0);
     this.shaderSSAO.setInt("gNormal", 1);
     this.shaderSSAO.setInt("texNoise", 2);
+    this.shaderSSAO.setInt("isOpenSSAO", this.isOpenSSAO ? 1 : 0);
     this.shaderSSAO.setFloat("ssaoStrength", this.ssaoStrength);
     if (!this.isSetUpKernal) {
       for (let index = 0; index < 64; index++) {
