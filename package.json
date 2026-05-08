@@ -12,7 +12,7 @@
     "copy": "ncp ./node_modules/@arcgis/core/assets ./public/assets"
   },
   "dependencies": {
-    "@arcgis/core": "^4.31.6",
+    "@arcgis/core": "^5.0.17",
     "@types/three": "^0.179.0",
     "antd": "^6.3.7",
     "gl-matrix": "^3.4.3",

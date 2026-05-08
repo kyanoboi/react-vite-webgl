@@ -52,14 +52,14 @@ const TriangleRender = RenderNode.createSubclass({
     gl.uniformMatrix4fv(
       gl.getUniformLocation(this.program, "u_projectionMatrix"),
       false,
-      this.camera["projectionMatrix"]
+      this.camera["projectionMatrix"],
     );
 
     // 通过将视图矩阵平移到局部原点来应用局部原点，这将把视图原点(0,0,0)放到局部原点
     gl.uniformMatrix4fv(
       gl.getUniformLocation(this.program, "u_viewMatrix"),
       false,
-      this.camera["viewMatrix"]
+      this.camera["viewMatrix"],
     );
 
     const time = performance.now() / 1000; // 获取秒数
@@ -102,7 +102,7 @@ const TriangleRender = RenderNode.createSubclass({
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVbo);
     // 转换坐标为渲染坐标
     const renderCoordinates = new Float32Array(
-      this.projectionCoordinates.length
+      this.projectionCoordinates.length,
     );
     webgl.toRenderCoordinates(
       view,
@@ -111,13 +111,13 @@ const TriangleRender = RenderNode.createSubclass({
       // 开始索引
       0,
       // 坐标系
-      SpatialReference.WGS84,
+      SpatialReference.WGS84 as __esri.SpatialReference & SpatialReference,
       // 顶点容器
       renderCoordinates,
       // 目标开始索引
       0,
       // 顶点数量
-      this.projectionCoordinates.length / 3
+      this.projectionCoordinates.length / 3,
     );
     this.calcCenter();
     gl.bufferData(gl.ARRAY_BUFFER, renderCoordinates, gl.STATIC_DRAW);
@@ -142,7 +142,7 @@ const TriangleRender = RenderNode.createSubclass({
     //   result,
     //   0,
     //   SpatialReference.WGS84,
-    //   1
+    //   1,
     // );
     // view.goTo([result[0], result[1]]);
   },

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import View from "@arcgis/core/views/View";
 import SceneView from "@arcgis/core/views/SceneView.js";
 import Map from "@arcgis/core/Map.js";
 import esriConfig from "@arcgis/core/config.js";
@@ -19,7 +20,7 @@ const MapComponent: React.FC = () => {
       ground: "world-elevation",
     });
 
-    const view = new SceneView({
+    const view: View & SceneView = new SceneView({
       viewingMode: "global",
       container: viewDivRef.current,
       map: map,
@@ -38,6 +39,7 @@ const MapComponent: React.FC = () => {
       },
     });
 
+    view.attributionVisible = false;
     view.qualityProfile = "low";
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
