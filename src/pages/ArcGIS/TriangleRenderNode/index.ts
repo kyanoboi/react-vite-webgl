@@ -1,6 +1,7 @@
 import * as webgl from "@arcgis/core/views/3d/webgl.js";
 import SpatialReference from "@arcgis/core/geometry/SpatialReference.js";
 import RenderNode from "@arcgis/core/views/3d/webgl/RenderNode.js";
+import type SceneView from "@arcgis/core/views/SceneView.js";
 import { VS, FS } from "./glsl";
 
 const colors = new Float32Array([1.0, 0.0, 0.5, 1.0, 0.5, 0.0, 0.0, 1.0, 0.5]);
@@ -14,15 +15,9 @@ const TriangleRender = RenderNode.createSubclass({
   posVbo: undefined,
   colorVbo: undefined,
   view: undefined,
-  constructor: function ({
-    view,
-    coordinates,
-  }: {
-    view: __esri.SceneView;
-    coordinates: [];
-  }) {
+  constructor: function ({ view, points }: { view: SceneView; points: [] }) {
     this.view = view;
-    this.projectionCoordinates = coordinates;
+    this.projectionPoints = points;
   },
   initialize: function () {
     this.initProgram();
@@ -31,12 +26,16 @@ const TriangleRender = RenderNode.createSubclass({
   render: function () {
     // 初始化状态
     this.resetWebGLState();
+    const gl: WebGL2RenderingContext = this.gl;
     // 绑定渲染输出节点
     const output = this.bindRenderTarget();
-    const gl: WebGL2RenderingContext = this.gl;
     // 开启混合
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // 开启深度测试
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(true);
     //
     gl.useProgram(this.program);
     //
@@ -52,14 +51,14 @@ const TriangleRender = RenderNode.createSubclass({
     gl.uniformMatrix4fv(
       gl.getUniformLocation(this.program, "u_projectionMatrix"),
       false,
-      this.camera["projectionMatrix"]
+      this.camera["projectionMatrix"],
     );
 
     // 通过将视图矩阵平移到局部原点来应用局部原点，这将把视图原点(0,0,0)放到局部原点
     gl.uniformMatrix4fv(
       gl.getUniformLocation(this.program, "u_viewMatrix"),
       false,
-      this.camera["viewMatrix"]
+      this.camera["viewMatrix"],
     );
 
     const time = performance.now() / 1000; // 获取秒数
@@ -102,49 +101,52 @@ const TriangleRender = RenderNode.createSubclass({
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVbo);
     // 转换坐标为渲染坐标
     const renderCoordinates = new Float32Array(
-      this.projectionCoordinates.length
+      this.projectionPoints.flat().length,
     );
     webgl.toRenderCoordinates(
       view,
       // 经纬度坐标
-      this.projectionCoordinates,
+      this.projectionPoints.flat(),
       // 开始索引
       0,
       // 坐标系
-      SpatialReference.WGS84,
+      SpatialReference.WGS84 as SpatialReference,
       // 顶点容器
       renderCoordinates,
       // 目标开始索引
       0,
       // 顶点数量
-      this.projectionCoordinates.length / 3
+      this.projectionPoints.length,
     );
-    this.calcCenter();
+    this.calcCenter(renderCoordinates);
     gl.bufferData(gl.ARRAY_BUFFER, renderCoordinates, gl.STATIC_DRAW);
     //
     this.colorVbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorVbo);
     gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
   },
-  calcCenter() {
-    // const v = renderCoordinates;
-    // const v1 = [v[0], v[1], v[2]];
-    // const v2 = [v[3], v[4], v[5]];
-    // const v3 = [v[6], v[7], v[8]];
-    // const x = (v1[0] + v2[0] + v3[0]) / 3;
-    // const y = (v1[1] + v2[1] + v3[1]) / 3;
-    // const z = (v1[2] + v2[2] + v3[2]) / 3;
-    // const result = new Array(3);
-    // webgl.fromRenderCoordinates(
-    //   view,
-    //   [x, y, z],
-    //   0,
-    //   result,
-    //   0,
-    //   SpatialReference.WGS84,
-    //   1
-    // );
-    // view.goTo([result[0], result[1]]);
+
+  // 计算三角形中心点
+  calcCenter(renderCoordinates: Float32Array) {
+    const view = this.view;
+    const v = renderCoordinates;
+    const v1 = [v[0], v[1], v[2]];
+    const v2 = [v[3], v[4], v[5]];
+    const v3 = [v[6], v[7], v[8]];
+    const x = (v1[0] + v2[0] + v3[0]) / 3;
+    const y = (v1[1] + v2[1] + v3[1]) / 3;
+    const z = (v1[2] + v2[2] + v3[2]) / 3;
+    const result = new Array(3);
+    webgl.fromRenderCoordinates(
+      view,
+      [x, y, z],
+      0,
+      result,
+      0,
+      SpatialReference.WGS84,
+      1,
+    );
+    view.goTo([result[0], result[1]]);
   },
 });
 

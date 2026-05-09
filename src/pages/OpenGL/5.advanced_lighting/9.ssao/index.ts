@@ -29,6 +29,8 @@ export default class Constructor {
   shaderSSAO!: ShaderClass;
   shaderSSAOBlur!: ShaderClass;
 
+  gui!: GUI;
+
   isOpenSSAO: boolean = false;
   ssaoStrength: number = 1.0;
 
@@ -138,6 +140,8 @@ export default class Constructor {
     gui.add(this, "loadModel").name("加载模型");
     gui.add(this, "isOpenSSAO").name("开启SSAO");
     gui.add(this, "ssaoStrength", 1.0, 10.0).name("SSAO强度");
+
+    this.gui = gui;
   }
 
   initGBufferFramebuffer() {
@@ -458,5 +462,11 @@ export default class Constructor {
         this.modelLoader.loadObjFile(input.files[0], "backpack/diffuse.jpg");
       }
     };
+  }
+
+  destroy() {
+    if (this.gui) {
+      this.gui.destroy();
+    }
   }
 }
