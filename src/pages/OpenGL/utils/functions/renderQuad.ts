@@ -20,7 +20,7 @@ export function renderQuad(
     ]);
 
     // 创建并配置VAO
-    quadVAO = gl.createVertexArray();
+    quadVAO = gl.createVertexArray()!;
     gl.bindVertexArray(quadVAO);
 
     const quadVBO = gl.createBuffer();

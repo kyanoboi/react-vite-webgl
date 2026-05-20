@@ -1,4 +1,4 @@
-import React, { Suspense } from "react";
+import { Suspense } from "react";
 import { RouteObject } from "react-router-dom";
 import routeConfig, { IRoute } from ".";
 
