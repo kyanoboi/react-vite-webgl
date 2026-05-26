@@ -7,6 +7,7 @@ import "@arcgis/core/assets/esri/themes/light/main.css";
 import Multipoint from "@arcgis/core/geometry/Multipoint.js";
 
 import TriangleRender from "./TriangleRenderNode";
+import RadarScan from "./effects/RadarScan";
 
 esriConfig.assetsPath = "./assets";
 
@@ -60,7 +61,20 @@ const MapComponent: React.FC = () => {
       ground
         ?.queryElevation(new Multipoint({ points }), { returnSampleInfo: true })
         .then(function (result) {
-          new TriangleRender({ view, points: result.geometry.points });
+          const trianglePoints = result.geometry.points;
+          new TriangleRender({ view, points: trianglePoints });
+
+          // 以三角形中心为扫描中心，创建雷达扫描特效
+          const centerLon = (trianglePoints[0][0] + trianglePoints[1][0] + trianglePoints[2][0]) / 3;
+          const centerLat = (trianglePoints[0][1] + trianglePoints[1][1] + trianglePoints[2][1]) / 3;
+          const centerElev = (trianglePoints[0][2] + trianglePoints[1][2] + trianglePoints[2][2]) / 3;
+
+          new RadarScan({
+            view,
+            center: [centerLon, centerLat, centerElev],
+            radius: 5000, // 5公里扫描半径
+            color: [0.0, 1.0, 1.0], // 青色
+          });
         })
         .catch(function (error) {
           console.error("Failed to query elevation:", error);

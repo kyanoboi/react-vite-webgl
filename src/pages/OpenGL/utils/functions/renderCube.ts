@@ -57,7 +57,7 @@ export function renderCube(
       ])
 
     // 创建并配置VAO
-    cubeVAO = gl.createVertexArray();
+    cubeVAO = gl.createVertexArray()!;
     gl.bindVertexArray(cubeVAO);
 
     const cubeVBO = gl.createBuffer();

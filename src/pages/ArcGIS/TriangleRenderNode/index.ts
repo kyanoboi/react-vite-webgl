@@ -72,7 +72,7 @@ const TriangleRender = RenderNode.createSubclass({
 
   initProgram: function () {
     const gl: WebGL2RenderingContext = this.gl;
-    const program = (this.program = gl.createProgram());
+    const program = (this.program = gl.createProgram()!);
     // 顶点着色器
     const vsShader = gl.createShader(gl.VERTEX_SHADER)!;
     gl.shaderSource(vsShader, VS);
