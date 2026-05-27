@@ -6,7 +6,7 @@ import esriConfig from "@arcgis/core/config.js";
 import "@arcgis/core/assets/esri/themes/light/main.css";
 import Multipoint from "@arcgis/core/geometry/Multipoint.js";
 
-import TriangleRender from "./TriangleRenderNode";
+// import TriangleRender from "./TriangleRenderNode";
 import RadarScan from "./effects/RadarScan";
 
 esriConfig.assetsPath = "./assets";
@@ -62,12 +62,24 @@ const MapComponent: React.FC = () => {
         ?.queryElevation(new Multipoint({ points }), { returnSampleInfo: true })
         .then(function (result) {
           const trianglePoints = result.geometry.points;
-          new TriangleRender({ view, points: trianglePoints });
+          // new TriangleRender({ view, points: trianglePoints });
 
           // 以三角形中心为扫描中心，创建雷达扫描特效
-          const centerLon = (trianglePoints[0][0] + trianglePoints[1][0] + trianglePoints[2][0]) / 3;
-          const centerLat = (trianglePoints[0][1] + trianglePoints[1][1] + trianglePoints[2][1]) / 3;
-          const centerElev = (trianglePoints[0][2] + trianglePoints[1][2] + trianglePoints[2][2]) / 3;
+          const centerLon =
+            (trianglePoints[0][0] +
+              trianglePoints[1][0] +
+              trianglePoints[2][0]) /
+            3;
+          const centerLat =
+            (trianglePoints[0][1] +
+              trianglePoints[1][1] +
+              trianglePoints[2][1]) /
+            3;
+          const centerElev =
+            (trianglePoints[0][2] +
+              trianglePoints[1][2] +
+              trianglePoints[2][2]) /
+            3;
 
           new RadarScan({
             view,
