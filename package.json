@@ -12,7 +12,7 @@
     "copy": "ncp ./node_modules/@arcgis/core/assets ./public/assets",
     "postinstall": "npm run copy",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "deploy": "node scripts/deploy-gh-pages.mjs"
   },
   "dependencies": {
     "@arcgis/core": "^5.0.17",
