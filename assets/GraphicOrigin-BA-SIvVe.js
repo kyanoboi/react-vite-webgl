@@ -1,0 +1,1 @@
+import{_ as i,c as n}from"./ShadowCastClear.glsl-CZ61TB0Z.js";const r=Symbol("getSliceableSymbol");function t(e){return typeof e=="object"&&!!e&&r in e}function s(e){return t(e)?e[r]:void 0}let o=class{};o=i([n("esri.graphic.GraphicOrigin")],o);export{s as e,r as o,o as s};

@@ -1,0 +1,1 @@
+import{r as a}from"./zscale-C3QF6c0-.js";function r(o,f,e){if(!(e!=null&&e.features)||!e.hasZ)return;const t=a(e.geometryType,f,o.outSpatialReference);if(t)for(const n of e.features)t(n.geometry)}export{r as t};

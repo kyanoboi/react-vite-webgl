@@ -1,0 +1,1 @@
+import{bt as e,bu as i}from"./ShadowCastClear.glsl-CZ61TB0Z.js";import{l as s}from"./query-Bz0lsOMI.js";import{g as c}from"./FeatureSet-CtmQydvp.js";async function l(r,o,t,n){const f=await u(r,o,t,n);return c.fromJSON(f)}function u(r,o,t,n){const f=e(r),a={...t},m=i.from(o);return s(f,m,m.sourceSpatialReference,a,n)}export{u as n,l as s};

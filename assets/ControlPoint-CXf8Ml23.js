@@ -1,0 +1,1 @@
+import{_ as o,b as e,a7 as r,c as n,g6 as p}from"./ShadowCastClear.glsl-CZ61TB0Z.js";let t=class extends p{constructor(s){super(s),this.sourcePoint=null,this.mapPoint=null}};o([e()],t.prototype,"sourcePoint",void 0),o([e({type:r})],t.prototype,"mapPoint",void 0),t=o([n("esri.layers.support.ControlPoint")],t);export{t as p};

@@ -1,0 +1,1 @@
+import{j3 as a}from"./ShadowCastClear.glsl-CZ61TB0Z.js";let t,n,o=!1;function p(){return t??(t=a("arcadeGeometryOperatorsWorker").then(e=>{n=e,o=!0,t=void 0}))}async function i(e,r){return o?n.apply("invokeGeometryOp",[e,r]):(await p(),i(e,r))}export{i as a};

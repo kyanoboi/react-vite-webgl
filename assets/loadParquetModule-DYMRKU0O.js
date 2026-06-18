@@ -1,0 +1,1 @@
+import{_ as r}from"./index-2ZYmQ1Ta.js";import{dw as a}from"./ShadowCastClear.glsl-CZ61TB0Z.js";let t=null;async function u(){return t||(t=e()),t}async function e(){const n=await r(()=>import("./bundle-B2VR6Ucj.js"),[]);return await n.default({module_or_path:a("esri/libs/parquet/pkg/bundle_bg.wasm")}),n}export{u as s};

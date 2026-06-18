@@ -1,0 +1,1 @@
+import{_ as r,b as o,c as n,bv as p}from"./ShadowCastClear.glsl-CZ61TB0Z.js";var t;let e=t=class extends p{constructor(s){super(s),this.type="selection"}clone(){return new t}};r([o({type:["selection"],readOnly:!0,json:{write:!0}})],e.prototype,"type",void 0),e=t=r([n("esri.layers.support.FeatureReductionSelection")],e);export{e as p};
